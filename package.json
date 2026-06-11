@@ -1,0 +1,7 @@
+{
+  "name": "anki-lookup-web-tests",
+  "private": true,
+  "scripts": {
+    "test": "node tests/js/scanner-core.test.js"
+  }
+}

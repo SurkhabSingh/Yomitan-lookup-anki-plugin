@@ -21,9 +21,11 @@ try {
     python -m pytest
     if ($LASTEXITCODE -ne 0) { throw "Tests failed." }
 
+    npm test
+    if ($LASTEXITCODE -ne 0) { throw "JavaScript tests failed." }
+
     & .\scripts\build.ps1
 }
 finally {
     Pop-Location
 }
-

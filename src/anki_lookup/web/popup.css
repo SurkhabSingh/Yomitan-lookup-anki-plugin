@@ -1,0 +1,157 @@
+#anki-lookup-popup {
+    --anki-lookup-bg: #ffffff;
+    --anki-lookup-fg: #202124;
+    --anki-lookup-muted: #667085;
+    --anki-lookup-border: #d0d5dd;
+    --anki-lookup-accent: #4f46e5;
+    --anki-lookup-error: #b42318;
+    position: fixed;
+    z-index: 2147483646;
+    display: none;
+    box-sizing: border-box;
+    width: var(--anki-lookup-width, 360px);
+    max-height: var(--anki-lookup-max-height, 420px);
+    overflow: hidden;
+    color: var(--anki-lookup-fg);
+    background: var(--anki-lookup-bg);
+    border: 1px solid var(--anki-lookup-border);
+    border-radius: 12px;
+    box-shadow: 0 18px 48px rgb(15 23 42 / 24%);
+    font-family: var(--anki-lookup-font-family, inherit);
+    font-size: var(--anki-lookup-font-size, 14px);
+    line-height: 1.45;
+    text-align: start;
+    direction: auto;
+}
+
+#anki-lookup-popup.anki-lookup--visible {
+    display: block;
+}
+
+#anki-lookup-popup.anki-lookup--pinned {
+    border-color: var(--anki-lookup-accent);
+    box-shadow: 0 18px 48px rgb(79 70 229 / 28%);
+}
+
+#anki-lookup-popup .anki-lookup__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--anki-lookup-border);
+}
+
+#anki-lookup-popup .anki-lookup__term {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    font-size: 1.15em;
+}
+
+#anki-lookup-popup .anki-lookup__actions {
+    display: flex;
+    flex: none;
+    gap: 6px;
+}
+
+#anki-lookup-popup button {
+    padding: 4px 8px;
+    color: var(--anki-lookup-muted);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    font: inherit;
+    cursor: pointer;
+}
+
+#anki-lookup-popup button:hover,
+#anki-lookup-popup button:focus-visible {
+    color: var(--anki-lookup-accent);
+    border-color: var(--anki-lookup-border);
+    outline: 2px solid transparent;
+}
+
+#anki-lookup-popup .anki-lookup__body {
+    max-height: calc(var(--anki-lookup-max-height, 420px) - 92px);
+    overflow: auto;
+    padding: 14px;
+}
+
+#anki-lookup-popup .anki-lookup__source {
+    margin-bottom: 8px;
+    color: var(--anki-lookup-muted);
+    font-size: 0.85em;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+
+#anki-lookup-popup .anki-lookup__definitions {
+    margin: 0;
+    padding-inline-start: 1.5em;
+}
+
+#anki-lookup-popup .anki-lookup__definitions li + li {
+    margin-top: 8px;
+}
+
+#anki-lookup-popup .anki-lookup__status {
+    color: var(--anki-lookup-muted);
+}
+
+#anki-lookup-popup .anki-lookup__status--error {
+    color: var(--anki-lookup-error);
+}
+
+#anki-lookup-popup .anki-lookup__footer {
+    padding: 7px 14px;
+    color: var(--anki-lookup-muted);
+    background: color-mix(in srgb, var(--anki-lookup-bg) 94%, var(--anki-lookup-fg));
+    border-top: 1px solid var(--anki-lookup-border);
+    font-size: 0.78em;
+}
+
+#anki-lookup-popup[data-theme="dark"] {
+    --anki-lookup-bg: #1f2937;
+    --anki-lookup-fg: #f9fafb;
+    --anki-lookup-muted: #cbd5e1;
+    --anki-lookup-border: #475569;
+    --anki-lookup-accent: #a5b4fc;
+    --anki-lookup-error: #fda29b;
+}
+
+#anki-lookup-popup[data-theme="high_contrast"] {
+    --anki-lookup-bg: #000000;
+    --anki-lookup-fg: #ffffff;
+    --anki-lookup-muted: #ffffff;
+    --anki-lookup-border: #ffffff;
+    --anki-lookup-accent: #ffff00;
+    --anki-lookup-error: #ff8080;
+    border-width: 2px;
+    box-shadow: none;
+}
+
+@media (prefers-color-scheme: dark) {
+    #anki-lookup-popup[data-theme="system"] {
+        --anki-lookup-bg: #1f2937;
+        --anki-lookup-fg: #f9fafb;
+        --anki-lookup-muted: #cbd5e1;
+        --anki-lookup-border: #475569;
+        --anki-lookup-accent: #a5b4fc;
+        --anki-lookup-error: #fda29b;
+    }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    #anki-lookup-popup.anki-lookup--visible {
+        animation: anki-lookup-enter 100ms ease-out;
+    }
+
+    @keyframes anki-lookup-enter {
+        from {
+            opacity: 0;
+            transform: translateY(3px);
+        }
+    }
+}
+

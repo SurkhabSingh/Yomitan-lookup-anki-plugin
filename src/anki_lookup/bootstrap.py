@@ -25,13 +25,16 @@ def initialize() -> bool:
     except ImportError:
         return False
 
+    from .hooks import register_hooks
+
     gui_hooks.main_window_did_init.append(_on_main_window_did_init)
+    register_hooks(gui_hooks)
     _initialized = True
     return True
 
 
 def _on_main_window_did_init() -> None:
-    """Install the Phase 0 smoke-test menu action."""
+    """Install web assets and the add-on information action."""
 
     global _about_action
 
@@ -45,11 +48,14 @@ def _on_main_window_did_init() -> None:
     if mw is None:
         return
 
+    mw.addonManager.setWebExports(__name__, r"web/.*\.(css|js)")
+
     action = QAction(f"{ADDON_NAME}: About", mw)
     action.triggered.connect(
         lambda: showInfo(
             f"{ADDON_NAME} {VERSION}\n\n"
-            "Phase 0 runtime and packaging harness is installed successfully."
+            "Hold Shift and move across text while reviewing a card to open "
+            "the Phase 1 lookup popup."
         )
     )
     mw.form.menuTools.addAction(action)

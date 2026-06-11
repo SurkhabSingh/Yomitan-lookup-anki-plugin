@@ -11,8 +11,15 @@ It is designed to provide:
 - A configurable popup with themes, fonts, sizing, and layout controls.
 - Direct creation of new Anki notes from lookup results.
 
-> **Development status:** Pre-alpha. The current build contains the tested add-on
-> foundation; dictionary lookup and translation features are still being implemented.
+> **Development status:** Pre-alpha. Hold-to-scan and the lookup popup are available
+> with placeholder results. Dictionary definitions and translation providers are still
+> being implemented.
+
+## Current Preview
+
+While reviewing a card, hold **Shift** and move the pointer across text. Anki Lookup
+will detect the word under the pointer and open the lookup popup. Press **Escape** to
+close it. You can also select text and press **Ctrl+Shift+L**.
 
 ## Installation
 

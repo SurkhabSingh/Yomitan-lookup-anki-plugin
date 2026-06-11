@@ -2,12 +2,16 @@
   "config_version": 1,
   "lookup": {
     "modifier": "Shift",
-    "release_behavior": "remain_open"
+    "release_behavior": "remain_open",
+    "selection_shortcut": "Ctrl+Shift+L",
+    "debounce_ms": 90,
+    "maximum_term_length": 200
   },
   "appearance": {
     "theme": "system",
     "font_family": "",
-    "font_size_px": 14
+    "font_size_px": 14,
+    "popup_width_px": 360,
+    "popup_max_height_px": 420
   }
 }
-

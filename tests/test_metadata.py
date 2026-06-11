@@ -20,6 +20,12 @@ class MetadataTests(unittest.TestCase):
         self.assertEqual(len(parts), 3)
         self.assertTrue(all(part.isdigit() for part in parts))
 
+    def test_project_version_matches_runtime_metadata(self) -> None:
+        project_path = Path(__file__).parents[1] / "pyproject.toml"
+        project_text = project_path.read_text(encoding="utf-8")
+
+        self.assertIn(f'version = "{VERSION}"', project_text)
+
 
 if __name__ == "__main__":
     unittest.main()

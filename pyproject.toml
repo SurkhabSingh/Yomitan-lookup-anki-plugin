@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "anki-lookup"
-version = "0.1.0"
+version = "0.2.0"
 description = "Language-agnostic dictionary lookup and translation tools for Anki."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -31,6 +31,9 @@ package-dir = { "" = "src" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+anki_lookup = ["*.json", "user_files/*.txt", "web/*.css", "web/*.js"]
 
 [tool.pytest.ini_options]
 addopts = "-ra -p no:cacheprovider"
