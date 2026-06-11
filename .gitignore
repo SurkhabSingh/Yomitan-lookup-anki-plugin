@@ -1,0 +1,11 @@
+/.mypy_cache/
+/.pytest_cache/
+/.ruff_cache/
+/.venv/
+/artifacts/
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+*.ankiaddon
+*.md
+!README.md

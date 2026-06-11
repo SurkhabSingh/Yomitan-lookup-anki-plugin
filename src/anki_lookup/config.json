@@ -1,0 +1,13 @@
+{
+  "config_version": 1,
+  "lookup": {
+    "modifier": "Shift",
+    "release_behavior": "remain_open"
+  },
+  "appearance": {
+    "theme": "system",
+    "font_family": "",
+    "font_size_px": 14
+  }
+}
+
