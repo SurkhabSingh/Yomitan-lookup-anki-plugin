@@ -30,7 +30,7 @@ class DictionaryImporterTests(unittest.TestCase):
             self.archive_path,
             terms=[
                 [
-                    "Café",
+                    "Cafe",
                     "cafe",
                     "common",
                     "",
@@ -52,10 +52,11 @@ class DictionaryImporterTests(unittest.TestCase):
 
         result = import_dictionary(self.database_path, self.archive_path)
         repository = DictionaryRepository(self.database_path)
-        entries = repository.search("CAFÉ")
+        entries = repository.search("CAFE")
 
         self.assertEqual(result.dictionary.term_count, 1)
-        self.assertEqual(entries[0].expression, "Café")
+        self.assertEqual(result.dictionary.kanji_count, 0)
+        self.assertEqual(entries[0].expression, "Cafe")
         self.assertEqual(entries[0].definitions, ("A small restaurant.",))
         self.assertEqual(entries[0].term_tags, ("common",))
         self.assertEqual(entries[0].definition_tags, ("noun",))
@@ -89,18 +90,27 @@ class DictionaryImporterTests(unittest.TestCase):
         repository = DictionaryRepository(self.database_path)
         self.assertEqual(repository.list_dictionaries(), [])
 
-    def test_rejects_kanji_only_archive_with_clear_message(self) -> None:
+    def test_imports_and_searches_kanji_only_archive(self) -> None:
         write_dictionary(
             self.archive_path,
             terms=[],
             extra_files={
                 "term_bank_1.json": [],
-                "kanji_bank_1.json": [["字", "ジ", "あざ", "", ["character"], {}]],
+                "kanji_bank_1.json": [
+                    ["字", "ジ", "あざ", "jouyou", ["character", "letter"], {"grade": 1}]
+                ],
             },
         )
 
-        with self.assertRaisesRegex(DictionaryImportError, "No searchable term"):
-            import_dictionary(self.database_path, self.archive_path)
+        result = import_dictionary(self.database_path, self.archive_path)
+        entries = DictionaryRepository(self.database_path).search("字")
+
+        self.assertEqual(result.dictionary.term_count, 0)
+        self.assertEqual(result.dictionary.kanji_count, 1)
+        self.assertEqual(entries[0].entry_type, "kanji")
+        self.assertEqual(entries[0].reading, "ジ / あざ")
+        self.assertEqual(entries[0].definitions, ("character", "letter"))
+        self.assertEqual(entries[0].metadata, (("grade", "1"),))
 
     def test_cancelled_import_rolls_back_partial_terms(self) -> None:
         rows = [

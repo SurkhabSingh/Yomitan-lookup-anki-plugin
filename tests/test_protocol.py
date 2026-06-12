@@ -15,11 +15,27 @@ class ProtocolTests(unittest.TestCase):
         self.assertIsNone(parse_lookup_message("other-addon:lookup"))
 
     def test_parses_and_normalizes_lookup_request(self) -> None:
-        payload = json.dumps({"action": "lookup", "request_id": 7, "term": "  hello   world "})
+        payload = json.dumps(
+            {
+                "action": "lookup",
+                "request_id": 7,
+                "term": "  hello   world ",
+                "sentence": " This is   hello world. ",
+                "candidates": ["hello world", "hello", "hello"],
+            }
+        )
 
         request = parse_lookup_message(f"{MESSAGE_PREFIX}{payload}")
 
-        self.assertEqual(request, LookupRequest(request_id=7, term="hello world"))
+        self.assertEqual(
+            request,
+            LookupRequest(
+                request_id=7,
+                term="hello world",
+                sentence="This is hello world.",
+                candidates=("hello world", "hello"),
+            ),
+        )
 
     def test_rejects_invalid_payload(self) -> None:
         with self.assertRaises(ValueError):
@@ -38,12 +54,17 @@ class ProtocolTests(unittest.TestCase):
             match_type="exact",
             score=1,
         )
-        result = lookup_result(LookupRequest(request_id=9, term="example"), [entry])
+        result = lookup_result(
+            LookupRequest(request_id=9, term="example", sentence="An example sentence."),
+            [entry],
+        )
 
         self.assertEqual(result["request_id"], 9)
         self.assertEqual(result["term"], "example")
         self.assertEqual(result["status"], "ready")
+        self.assertEqual(result["sentence"], "An example sentence.")
         self.assertEqual(result["entries"][0]["dictionary"], "Synthetic")
+        self.assertEqual(result["entries"][0]["entry_type"], "term")
 
     def test_lookup_result_has_empty_state(self) -> None:
         result = lookup_result(LookupRequest(request_id=10, term="missing"), [])

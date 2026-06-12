@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ..dictionary import DictionaryInfo, ImportResult
+from ..dictionary import BatchImportResult, DictionaryInfo
 from ..runtime import dictionary_service
 
 
@@ -39,21 +39,21 @@ class DictionaryManager:
 
         layout = QVBoxLayout(self.dialog)
         description = QLabel(
-            "Import Yomitan format-3 term dictionaries. Dictionary files stay "
+            "Import Yomitan format-3 term and kanji dictionaries. Dictionary files stay "
             "on this computer and are indexed in Anki Lookup's user data."
         )
         description.setWordWrap(True)
         layout.addWidget(description)
 
         self.list_widget = QListWidget()
-        self.list_widget.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.list_widget.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.list_widget.itemChanged.connect(self._on_item_changed)
         self.list_widget.itemSelectionChanged.connect(self._update_buttons)
         layout.addWidget(self.list_widget, 1)
 
         action_layout = QHBoxLayout()
-        self.import_button = QPushButton("Import...")
-        self.remove_button = QPushButton("Remove")
+        self.import_button = QPushButton("Import Dictionaries...")
+        self.remove_button = QPushButton("Remove Selected")
         self.up_button = QPushButton("Move Up")
         self.down_button = QPushButton("Move Down")
         action_layout.addWidget(self.import_button)
@@ -94,7 +94,8 @@ class DictionaryManager:
                 item.setToolTip(
                     f"Revision: {dictionary.revision}\n"
                     f"Format: {dictionary.format}\n"
-                    f"Terms: {dictionary.term_count:,}"
+                    f"Terms: {dictionary.term_count:,}\n"
+                    f"Kanji: {dictionary.kanji_count:,}"
                 )
                 self.list_widget.addItem(item)
                 if dictionary.id == select_id:
@@ -105,13 +106,13 @@ class DictionaryManager:
 
     def _choose_import(self) -> None:
         QFileDialog = self._qt["QFileDialog"]
-        filename, _ = QFileDialog.getOpenFileName(
+        filenames, _ = QFileDialog.getOpenFileNames(
             self.dialog,
-            "Import Yomitan Dictionary",
+            "Import Yomitan Dictionaries",
             "",
             "Yomitan dictionaries (*.zip);;ZIP archives (*.zip)",
         )
-        if not filename:
+        if not filenames:
             return
 
         from aqt import mw
@@ -122,60 +123,86 @@ class DictionaryManager:
         (
             QueryOp(
                 parent=self.dialog,
-                op=lambda _collection: dictionary_service().import_archive(
-                    Path(filename),
+                op=lambda _collection: dictionary_service().import_archives(
+                    [Path(filename) for filename in filenames],
                     should_cancel=lambda: bool(mw and mw.progress.want_cancel()),
                 ),
-                success=self._import_succeeded,
+                success=self._imports_finished,
             )
             .without_collection()
-            .with_progress("Importing dictionary...")
+            .with_progress(f"Importing {len(filenames)} dictionaries...")
             .failure(lambda error: self._operation_failed(error, showWarning))
             .run_in_background()
         )
 
-    def _import_succeeded(self, result: ImportResult) -> None:
-        from aqt.utils import tooltip
+    def _imports_finished(self, result: BatchImportResult) -> None:
+        from aqt.utils import showWarning, tooltip
 
         self._set_busy(False)
-        self.refresh(result.dictionary.id)
-        tooltip(
-            f"Imported {result.dictionary.title}: "
-            f"{result.dictionary.term_count:,} terms in "
-            f"{result.elapsed_seconds:.1f} seconds.",
-            parent=self.dialog,
+        selected_id = result.imported[-1].dictionary.id if result.imported else None
+        self.refresh(selected_id)
+
+        imported_count = len(result.imported)
+        total_terms = sum(item.dictionary.term_count for item in result.imported)
+        total_kanji = sum(item.dictionary.kanji_count for item in result.imported)
+        summary = (
+            f"Imported {imported_count} "
+            f"{'dictionary' if imported_count == 1 else 'dictionaries'}: "
+            f"{total_terms:,} terms and {total_kanji:,} kanji."
         )
+        if result.cancelled:
+            summary += " Remaining imports were cancelled."
+        if imported_count:
+            tooltip(summary, parent=self.dialog)
+        if result.failed:
+            details = "\n".join(
+                f"- {failure.filename}: {failure.message}" for failure in result.failed
+            )
+            showWarning(
+                f"{summary}\n\n{len(result.failed)} import(s) failed:\n{details}",
+                parent=self.dialog,
+            )
+        elif not imported_count:
+            showWarning(summary, parent=self.dialog)
 
     def _remove_selected(self) -> None:
-        dictionary_id = self._selected_id()
-        if dictionary_id is None:
+        selected_items = self.list_widget.selectedItems()
+        dictionary_ids = self._selected_ids()
+        if not dictionary_ids:
             return
 
         from aqt.operations import QueryOp
         from aqt.utils import askUser, showWarning
 
-        item = self.list_widget.currentItem()
-        if item is None or not askUser(
-            f"Remove {item.text()} and its local index?", parent=self.dialog
-        ):
+        if len(selected_items) == 1:
+            prompt = f"Remove {selected_items[0].text()} and its local index?"
+        else:
+            prompt = f"Remove {len(selected_items)} selected dictionaries and their local indexes?"
+        if not askUser(prompt, parent=self.dialog):
             return
 
         self._set_busy(True)
         (
             QueryOp(
                 parent=self.dialog,
-                op=lambda _collection: dictionary_service().remove(dictionary_id),
-                success=lambda _result: self._remove_succeeded(),
+                op=lambda _collection: dictionary_service().remove_many(dictionary_ids),
+                success=lambda _result: self._remove_succeeded(len(dictionary_ids)),
             )
             .without_collection()
-            .with_progress("Removing dictionary...")
+            .with_progress(f"Removing {len(dictionary_ids)} dictionaries...")
             .failure(lambda error: self._operation_failed(error, showWarning))
             .run_in_background()
         )
 
-    def _remove_succeeded(self) -> None:
+    def _remove_succeeded(self, removed_count: int) -> None:
+        from aqt.utils import tooltip
+
         self._set_busy(False)
         self.refresh()
+        tooltip(
+            f"Removed {removed_count} {'dictionary' if removed_count == 1 else 'dictionaries'}.",
+            parent=self.dialog,
+        )
 
     def _on_item_changed(self, item: Any) -> None:
         if self._updating:
@@ -192,9 +219,10 @@ class DictionaryManager:
             self.refresh(int(dictionary_id))
 
     def _move_selected(self, offset: int) -> None:
-        dictionary_id = self._selected_id()
-        if dictionary_id is None:
+        dictionary_ids = self._selected_ids()
+        if len(dictionary_ids) != 1:
             return
+        dictionary_id = dictionary_ids[0]
         try:
             dictionary_service().move(dictionary_id, offset)
         except Exception as error:
@@ -204,26 +232,28 @@ class DictionaryManager:
             return
         self.refresh(dictionary_id)
 
-    def _selected_id(self) -> int | None:
-        item = self.list_widget.currentItem()
-        if item is None:
-            return None
+    def _selected_ids(self) -> list[int]:
         Qt = self._qt["Qt"]
-        return int(item.data(Qt.ItemDataRole.UserRole))
+        return [
+            int(item.data(Qt.ItemDataRole.UserRole)) for item in self.list_widget.selectedItems()
+        ]
 
     def _update_buttons(self) -> None:
         row = self.list_widget.currentRow()
         count = self.list_widget.count()
-        has_selection = row >= 0
-        self.remove_button.setEnabled(has_selection)
-        self.up_button.setEnabled(has_selection and row > 0)
-        self.down_button.setEnabled(has_selection and row < count - 1)
+        selection_count = len(self.list_widget.selectedItems())
+        self.remove_button.setEnabled(selection_count > 0)
+        self.up_button.setEnabled(selection_count == 1 and row > 0)
+        self.down_button.setEnabled(selection_count == 1 and row < count - 1)
 
     def _set_busy(self, busy: bool) -> None:
         self.import_button.setEnabled(not busy)
-        self.remove_button.setEnabled(not busy and self._selected_id() is not None)
-        self.up_button.setEnabled(not busy)
-        self.down_button.setEnabled(not busy)
+        if busy:
+            self.remove_button.setEnabled(False)
+            self.up_button.setEnabled(False)
+            self.down_button.setEnabled(False)
+        else:
+            self._update_buttons()
 
     def _operation_failed(self, error: Exception, show_warning: Any) -> None:
         self._set_busy(False)
@@ -235,4 +265,10 @@ def show_dictionary_manager(parent: Any) -> None:
 
 
 def _dictionary_label(dictionary: DictionaryInfo) -> str:
-    return f"{dictionary.title} - {dictionary.term_count:,} terms"
+    parts = []
+    if dictionary.term_count:
+        parts.append(f"{dictionary.term_count:,} terms")
+    if dictionary.kanji_count:
+        parts.append(f"{dictionary.kanji_count:,} kanji")
+    count_label = ", ".join(parts) or "no searchable entries"
+    return f"{dictionary.title} - {count_label}"

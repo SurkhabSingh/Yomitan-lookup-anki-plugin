@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from .models import MorphologyCandidate
+
 
 class LanguageProfile(Protocol):
     def language_codes(self) -> tuple[str, ...]:
@@ -12,7 +14,7 @@ class LanguageProfile(Protocol):
     def normalize(self, value: str) -> str:
         """Return the normalized lookup form."""
 
-    def expand_query(self, value: str) -> tuple[str, ...]:
+    def expand_query(self, value: str) -> tuple[MorphologyCandidate, ...]:
         """Return morphology-derived candidates, including the normalized input."""
 
     def text_direction(self, value: str) -> str:

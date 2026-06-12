@@ -11,8 +11,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "modifier": "Shift",
         "release_behavior": "remain_open",
         "selection_shortcut": "Ctrl+Shift+L",
-        "debounce_ms": 90,
+        "pin_shortcut": "Ctrl+Shift+K",
+        "debounce_ms": 20,
         "maximum_term_length": 200,
+        "allow_nested_popups": True,
+        "maximum_popup_depth": 4,
     },
     "appearance": {
         "theme": "system",
@@ -20,12 +23,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "font_size_px": 14,
         "popup_width_px": 360,
         "popup_max_height_px": 420,
+        "dictionary_layout": "source_rail",
     },
 }
 
 ALLOWED_MODIFIERS = {"Shift", "Control", "Alt", "Meta"}
-ALLOWED_RELEASE_BEHAVIORS = {"close", "remain_open", "pin"}
+ALLOWED_RELEASE_BEHAVIORS = {"close", "remain_open"}
 ALLOWED_THEMES = {"system", "light", "dark", "high_contrast"}
+ALLOWED_DICTIONARY_LAYOUTS = {"source_rail", "continuous"}
 
 
 def runtime_config(raw_config: object) -> dict[str, Any]:
@@ -42,11 +47,24 @@ def runtime_config(raw_config: object) -> dict[str, Any]:
         lookup["modifier"] = DEFAULT_CONFIG["lookup"]["modifier"]
     if lookup["release_behavior"] not in ALLOWED_RELEASE_BEHAVIORS:
         lookup["release_behavior"] = DEFAULT_CONFIG["lookup"]["release_behavior"]
-    lookup["debounce_ms"] = _bounded_int(lookup["debounce_ms"], 30, 500, 90)
+    lookup["debounce_ms"] = _bounded_int(lookup["debounce_ms"], 0, 250, 20)
     lookup["maximum_term_length"] = _bounded_int(lookup["maximum_term_length"], 1, 500, 200)
+    lookup["maximum_popup_depth"] = _bounded_int(lookup["maximum_popup_depth"], 1, 8, 4)
+    lookup["selection_shortcut"] = validated_shortcut(
+        lookup["selection_shortcut"],
+        DEFAULT_CONFIG["lookup"]["selection_shortcut"],
+    )
+    lookup["pin_shortcut"] = validated_shortcut(
+        lookup["pin_shortcut"],
+        DEFAULT_CONFIG["lookup"]["pin_shortcut"],
+    )
+    if lookup["pin_shortcut"] == lookup["selection_shortcut"]:
+        lookup["pin_shortcut"] = DEFAULT_CONFIG["lookup"]["pin_shortcut"]
 
     if appearance["theme"] not in ALLOWED_THEMES:
         appearance["theme"] = DEFAULT_CONFIG["appearance"]["theme"]
+    if appearance["dictionary_layout"] not in ALLOWED_DICTIONARY_LAYOUTS:
+        appearance["dictionary_layout"] = DEFAULT_CONFIG["appearance"]["dictionary_layout"]
     appearance["font_family"] = str(appearance["font_family"])[:200]
     appearance["font_size_px"] = _bounded_int(appearance["font_size_px"], 10, 32, 14)
     appearance["popup_width_px"] = _bounded_int(appearance["popup_width_px"], 240, 720, 360)
@@ -70,3 +88,22 @@ def _bounded_int(value: object, minimum: int, maximum: int, fallback: int) -> in
     if isinstance(value, bool) or not isinstance(value, int):
         return fallback
     return min(maximum, max(minimum, value))
+
+
+def validated_shortcut(value: object, fallback: str) -> str:
+    if not isinstance(value, str):
+        return fallback
+    parts = [part.strip() for part in value.split("+") if part.strip()]
+    if len(parts) < 2:
+        return fallback
+    modifiers = {"ctrl": "Ctrl", "shift": "Shift", "alt": "Alt", "meta": "Meta"}
+    normalized_modifiers = []
+    for part in parts[:-1]:
+        modifier = modifiers.get(part.casefold())
+        if modifier is None or modifier in normalized_modifiers:
+            return fallback
+        normalized_modifiers.append(modifier)
+    key = parts[-1]
+    if len(key) != 1 or not key.isalnum():
+        return fallback
+    return "+".join([*normalized_modifiers, key.upper()])

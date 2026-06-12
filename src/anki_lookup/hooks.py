@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from .config import runtime_config
@@ -10,6 +11,7 @@ from .protocol import error_result, lookup_result, parse_lookup_message
 from .runtime import dictionary_service
 
 _registered = False
+logger = logging.getLogger(__name__)
 
 
 def register_hooks(gui_hooks: Any) -> None:
@@ -64,10 +66,14 @@ def on_webview_did_receive_js_message(
         return handled
 
     try:
-        entries = dictionary_service().lookup(request.term)
+        matched_term, entries = dictionary_service().lookup_candidates(
+            request.candidates,
+            request.term,
+        )
     except Exception:
+        logger.exception("Anki Lookup dictionary lookup failed")
         return (True, error_result("Dictionary lookup failed.", request.request_id))
-    return (True, lookup_result(request, entries))
+    return (True, lookup_result(request, entries, matched_term))
 
 
 def _is_reviewer(context: object | None) -> bool:

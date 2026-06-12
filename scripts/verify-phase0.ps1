@@ -24,6 +24,8 @@ try {
     npm test
     if ($LASTEXITCODE -ne 0) { throw "JavaScript tests failed." }
 
+    & .\scripts\test-install-dev.ps1
+
     & .\scripts\build.ps1
 }
 finally {

@@ -4,14 +4,18 @@
     "modifier": "Shift",
     "release_behavior": "remain_open",
     "selection_shortcut": "Ctrl+Shift+L",
-    "debounce_ms": 90,
-    "maximum_term_length": 200
+    "pin_shortcut": "Ctrl+Shift+K",
+    "debounce_ms": 20,
+    "maximum_term_length": 200,
+    "allow_nested_popups": true,
+    "maximum_popup_depth": 4
   },
   "appearance": {
     "theme": "system",
     "font_family": "",
     "font_size_px": 14,
     "popup_width_px": 360,
-    "popup_max_height_px": 420
+    "popup_max_height_px": 420,
+    "dictionary_layout": "source_rail"
   }
 }

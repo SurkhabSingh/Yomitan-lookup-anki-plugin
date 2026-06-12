@@ -10,6 +10,8 @@ class RuntimeConfigTests(unittest.TestCase):
                 "lookup": {
                     "modifier": "Space",
                     "release_behavior": "unknown",
+                    "selection_shortcut": "L",
+                    "pin_shortcut": "Ctrl+Shift+L",
                     "debounce_ms": 2,
                     "maximum_term_length": 10_000,
                 },
@@ -19,25 +21,44 @@ class RuntimeConfigTests(unittest.TestCase):
                     "font_size_px": 200,
                     "popup_width_px": 10,
                     "popup_max_height_px": 10_000,
+                    "dictionary_layout": "floating",
                 },
             }
         )
 
         self.assertEqual(config["lookup"]["modifier"], "Shift")
         self.assertEqual(config["lookup"]["release_behavior"], "remain_open")
-        self.assertEqual(config["lookup"]["debounce_ms"], 30)
+        self.assertEqual(config["lookup"]["selection_shortcut"], "Ctrl+Shift+L")
+        self.assertEqual(config["lookup"]["pin_shortcut"], "Ctrl+Shift+K")
+        self.assertEqual(config["lookup"]["debounce_ms"], 2)
         self.assertEqual(config["lookup"]["maximum_term_length"], 500)
+        self.assertTrue(config["lookup"]["allow_nested_popups"])
+        self.assertEqual(config["lookup"]["maximum_popup_depth"], 4)
         self.assertEqual(config["appearance"]["theme"], "system")
         self.assertEqual(len(config["appearance"]["font_family"]), 200)
         self.assertEqual(config["appearance"]["font_size_px"], 32)
         self.assertEqual(config["appearance"]["popup_width_px"], 240)
         self.assertEqual(config["appearance"]["popup_max_height_px"], 800)
+        self.assertEqual(config["appearance"]["dictionary_layout"], "source_rail")
 
     def test_unknown_keys_are_not_exposed_to_javascript(self) -> None:
         config = runtime_config({"unexpected": "value", "lookup": {"unexpected": True}})
 
         self.assertNotIn("unexpected", config)
         self.assertNotIn("unexpected", config["lookup"])
+
+    def test_normalizes_valid_shortcuts(self) -> None:
+        config = runtime_config(
+            {
+                "lookup": {
+                    "selection_shortcut": "ctrl+alt+s",
+                    "pin_shortcut": "shift+p",
+                }
+            }
+        )
+
+        self.assertEqual(config["lookup"]["selection_shortcut"], "Ctrl+Alt+S")
+        self.assertEqual(config["lookup"]["pin_shortcut"], "Shift+P")
 
 
 if __name__ == "__main__":

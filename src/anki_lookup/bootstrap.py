@@ -7,6 +7,7 @@ from .metadata import ADDON_NAME, VERSION
 _initialized = False
 _about_action: Optional[Any] = None
 _dictionary_action: Optional[Any] = None
+_settings_action: Optional[Any] = None
 
 
 def initialize() -> bool:
@@ -37,7 +38,7 @@ def initialize() -> bool:
 def _on_main_window_did_init() -> None:
     """Install web assets and the add-on information action."""
 
-    global _about_action, _dictionary_action
+    global _about_action, _dictionary_action, _settings_action
 
     if _about_action is not None:
         return
@@ -68,3 +69,10 @@ def _on_main_window_did_init() -> None:
     dictionary_action.triggered.connect(lambda: show_dictionary_manager(mw))
     mw.form.menuTools.addAction(dictionary_action)
     _dictionary_action = dictionary_action
+
+    from .ui.settings_dialog import show_settings_dialog
+
+    settings_action = QAction("Anki Lookup: Settings...", mw)
+    settings_action.triggered.connect(lambda: show_settings_dialog(mw))
+    mw.form.menuTools.addAction(settings_action)
+    _settings_action = settings_action

@@ -1,4 +1,4 @@
-"""Secure transactional importer for Yomitan format-3 term dictionaries."""
+"""Secure transactional importer for Yomitan format-3 dictionaries."""
 
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ def import_dictionary(
     archive_path: Path,
     should_cancel: Callable[[], bool] | None = None,
 ) -> ImportResult:
-    """Import one Yomitan term dictionary into the database."""
+    """Import one Yomitan dictionary into the database."""
 
     started = time.perf_counter()
     database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -54,19 +54,17 @@ def import_dictionary(
             index = _load_json_object(archive, entries["index.json"])
             title, revision, dictionary_format = _validate_index(index)
             term_banks = _ordered_matching(entries.values(), TERM_BANK_PATTERN)
+            kanji_banks = _ordered_matching(entries.values(), KANJI_BANK_PATTERN)
 
-            if not term_banks:
-                if _ordered_matching(entries.values(), KANJI_BANK_PATTERN):
-                    raise DictionaryImportError(
-                        "This is a kanji-only dictionary. Kanji banks are planned "
-                        "after the Phase 2 term dictionary MVP."
-                    )
+            if not term_banks and not kanji_banks:
                 if _ordered_matching(entries.values(), TERM_META_BANK_PATTERN):
                     raise DictionaryImportError(
                         "This archive contains term metadata but no term definitions. "
                         "Import a term dictionary first."
                     )
-                raise DictionaryImportError("The archive contains no term banks.")
+                raise DictionaryImportError(
+                    "The archive contains no searchable term or kanji banks."
+                )
 
             connection = sqlite3.connect(database_path, timeout=30)
             try:
@@ -80,8 +78,8 @@ def import_dictionary(
                     """
                     INSERT INTO dictionaries(
                         title, revision, format, source_filename, enabled, priority,
-                        term_count, imported_at
-                    ) VALUES (?, ?, ?, ?, 1, ?, 0, ?)
+                        term_count, kanji_count, imported_at
+                    ) VALUES (?, ?, ?, ?, 1, ?, 0, 0, ?)
                     """,
                     (
                         title,
@@ -102,6 +100,17 @@ def import_dictionary(
                     dictionary_id,
                     should_cancel,
                 )
+                kanji_count = _import_kanji_banks(
+                    connection,
+                    archive,
+                    kanji_banks,
+                    dictionary_id,
+                    should_cancel,
+                )
+                if term_count == 0 and kanji_count == 0:
+                    raise DictionaryImportError(
+                        "No searchable term definitions or kanji entries were found."
+                    )
                 _import_tag_banks(
                     connection,
                     archive,
@@ -109,8 +118,12 @@ def import_dictionary(
                     dictionary_id,
                 )
                 connection.execute(
-                    "UPDATE dictionaries SET term_count = ? WHERE id = ?",
-                    (term_count, dictionary_id),
+                    """
+                    UPDATE dictionaries
+                    SET term_count = ?, kanji_count = ?
+                    WHERE id = ?
+                    """,
+                    (term_count, kanji_count, dictionary_id),
                 )
                 connection.commit()
             except sqlite3.IntegrityError as error:
@@ -136,6 +149,7 @@ def import_dictionary(
         enabled=True,
         priority=int(priority),
         term_count=term_count,
+        kanji_count=kanji_count,
     )
     return ImportResult(dictionary, time.perf_counter() - started)
 
@@ -216,9 +230,85 @@ def _import_term_banks(
                 batch.clear()
     if batch:
         _insert_terms(connection, batch)
-    if term_count == 0:
-        raise DictionaryImportError("No searchable term definitions were found.")
     return term_count
+
+
+def _import_kanji_banks(
+    connection: sqlite3.Connection,
+    archive: ZipFile,
+    banks: list[ZipInfo],
+    dictionary_id: int,
+    should_cancel: Callable[[], bool] | None,
+) -> int:
+    kanji_count = 0
+    batch: list[tuple[object, ...]] = []
+    for bank in banks:
+        _raise_if_cancelled(should_cancel)
+        rows = _load_json_array(archive, bank)
+        for row_number, row in enumerate(rows, start=1):
+            parsed = _parse_kanji_row(row, bank.filename, row_number)
+            if parsed is None:
+                continue
+            batch.append((dictionary_id, *parsed))
+            kanji_count += 1
+            if len(batch) >= INSERT_BATCH_SIZE:
+                _raise_if_cancelled(should_cancel)
+                _insert_kanji(connection, batch)
+                batch.clear()
+    if batch:
+        _insert_kanji(connection, batch)
+    return kanji_count
+
+
+def _parse_kanji_row(row: object, bank_name: str, row_number: int) -> tuple[object, ...] | None:
+    if not isinstance(row, list) or len(row) < 6:
+        raise DictionaryImportError(
+            f"{bank_name} row {row_number} does not match the format-3 kanji schema."
+        )
+    character, onyomi, kunyomi, tags, meanings, stats = row[:6]
+    if not isinstance(character, str) or not character.strip():
+        return None
+    if not isinstance(meanings, list):
+        raise DictionaryImportError(f"{bank_name} row {row_number} has invalid kanji meanings.")
+    cleaned_meanings = tuple(
+        meaning.strip() for meaning in meanings if isinstance(meaning, str) and meaning.strip()
+    )
+    if not cleaned_meanings:
+        return None
+    if not isinstance(stats, dict):
+        stats = {}
+    safe_stats = {
+        str(key): value
+        for key, value in stats.items()
+        if isinstance(key, str) and _is_safe_stat_value(value)
+    }
+    return (
+        character.strip(),
+        normalize_term(character),
+        onyomi.strip() if isinstance(onyomi, str) else "",
+        kunyomi.strip() if isinstance(kunyomi, str) else "",
+        tags.strip() if isinstance(tags, str) else "",
+        json.dumps(cleaned_meanings, ensure_ascii=False, separators=(",", ":")),
+        json.dumps(safe_stats, ensure_ascii=False, separators=(",", ":")),
+    )
+
+
+def _insert_kanji(connection: sqlite3.Connection, batch: list[tuple[object, ...]]) -> None:
+    connection.executemany(
+        """
+        INSERT INTO kanji(
+            dictionary_id, character, normalized_character, onyomi, kunyomi,
+            tags, meanings_json, stats_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        batch,
+    )
+
+
+def _is_safe_stat_value(value: object) -> bool:
+    if isinstance(value, float):
+        return math.isfinite(value)
+    return value is None or isinstance(value, (str, int, bool))
 
 
 def _parse_term_row(row: object, bank_name: str, row_number: int) -> tuple[object, ...] | None:
@@ -226,13 +316,15 @@ def _parse_term_row(row: object, bank_name: str, row_number: int) -> tuple[objec
         raise DictionaryImportError(
             f"{bank_name} row {row_number} does not match the format-3 term schema."
         )
-    expression, reading, term_tags, _rules, score, glossary, sequence, definition_tags = row[:8]
+    expression, reading, term_tags, rules, score, glossary, sequence, definition_tags = row[:8]
     if not isinstance(expression, str) or not expression.strip():
         return None
     if not isinstance(reading, str):
         reading = ""
     if not isinstance(term_tags, str):
         term_tags = ""
+    if not isinstance(rules, str):
+        rules = ""
     if not isinstance(definition_tags, str):
         definition_tags = ""
     if isinstance(score, bool) or not isinstance(score, (int, float)) or not math.isfinite(score):
@@ -249,6 +341,7 @@ def _parse_term_row(row: object, bank_name: str, row_number: int) -> tuple[objec
         normalize_term(expression),
         normalize_term(reading),
         term_tags.strip(),
+        rules.strip(),
         definition_tags.strip(),
         float(score),
         sequence,
@@ -261,9 +354,9 @@ def _insert_terms(connection: sqlite3.Connection, batch: list[tuple[object, ...]
         """
         INSERT INTO terms(
             dictionary_id, expression, reading, normalized_expression,
-            normalized_reading, term_tags, definition_tags, score, sequence,
+            normalized_reading, term_tags, rules, definition_tags, score, sequence,
             definitions_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         batch,
     )
