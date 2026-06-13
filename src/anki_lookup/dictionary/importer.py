@@ -52,18 +52,14 @@ def import_dictionary(
         with ZipFile(archive_path) as archive:
             entries = _validate_archive(archive)
             index = _load_json_object(archive, entries["index.json"])
-            title, revision, dictionary_format = _validate_index(index)
+            title, revision, dictionary_format, frequency_mode = _validate_index(index)
             term_banks = _ordered_matching(entries.values(), TERM_BANK_PATTERN)
             kanji_banks = _ordered_matching(entries.values(), KANJI_BANK_PATTERN)
+            term_meta_banks = _ordered_matching(entries.values(), TERM_META_BANK_PATTERN)
 
-            if not term_banks and not kanji_banks:
-                if _ordered_matching(entries.values(), TERM_META_BANK_PATTERN):
-                    raise DictionaryImportError(
-                        "This archive contains term metadata but no term definitions. "
-                        "Import a term dictionary first."
-                    )
+            if not term_banks and not kanji_banks and not term_meta_banks:
                 raise DictionaryImportError(
-                    "The archive contains no searchable term or kanji banks."
+                    "The archive contains no searchable term, kanji, or term metadata banks."
                 )
 
             connection = sqlite3.connect(database_path, timeout=30)
@@ -78,8 +74,9 @@ def import_dictionary(
                     """
                     INSERT INTO dictionaries(
                         title, revision, format, source_filename, enabled, priority,
-                        term_count, kanji_count, imported_at
-                    ) VALUES (?, ?, ?, ?, 1, ?, 0, 0, ?)
+                        term_count, kanji_count, metadata_count, frequency_mode,
+                        imported_at
+                    ) VALUES (?, ?, ?, ?, 1, ?, 0, 0, 0, ?, ?)
                     """,
                     (
                         title,
@@ -87,6 +84,7 @@ def import_dictionary(
                         dictionary_format,
                         archive_path.name,
                         priority,
+                        frequency_mode or "",
                         datetime.now(timezone.utc).isoformat(),
                     ),
                 )
@@ -107,9 +105,17 @@ def import_dictionary(
                     dictionary_id,
                     should_cancel,
                 )
-                if term_count == 0 and kanji_count == 0:
+                metadata_count = _import_term_meta_banks(
+                    connection,
+                    archive,
+                    term_meta_banks,
+                    dictionary_id,
+                    should_cancel,
+                )
+                if term_count == 0 and kanji_count == 0 and metadata_count == 0:
                     raise DictionaryImportError(
-                        "No searchable term definitions or kanji entries were found."
+                        "No searchable term definitions, kanji entries, or term metadata "
+                        "were found."
                     )
                 _import_tag_banks(
                     connection,
@@ -122,6 +128,7 @@ def import_dictionary(
                     UPDATE dictionaries
                     SET term_count = ?,
                         kanji_count = ?,
+                        metadata_count = ?,
                         has_rule_metadata = CASE
                             WHEN EXISTS (
                                 SELECT 1
@@ -140,7 +147,7 @@ def import_dictionary(
                         END
                     WHERE id = ?
                     """,
-                    (term_count, kanji_count, dictionary_id),
+                    (term_count, kanji_count, metadata_count, dictionary_id),
                 )
                 connection.commit()
             except sqlite3.IntegrityError as error:
@@ -167,6 +174,8 @@ def import_dictionary(
         priority=int(priority),
         term_count=term_count,
         kanji_count=kanji_count,
+        metadata_count=metadata_count,
+        frequency_mode=frequency_mode,
     )
     return ImportResult(dictionary, time.perf_counter() - started)
 
@@ -208,7 +217,7 @@ def _validate_archive(archive: ZipFile) -> dict[str, ZipInfo]:
     return by_name
 
 
-def _validate_index(index: dict[str, Any]) -> tuple[str, str, int]:
+def _validate_index(index: dict[str, Any]) -> tuple[str, str, int, str | None]:
     title = index.get("title")
     revision = index.get("revision")
     dictionary_format = index.get("format")
@@ -220,7 +229,13 @@ def _validate_index(index: dict[str, Any]) -> tuple[str, str, int]:
         raise DictionaryImportError(
             f"Dictionary format {dictionary_format!r} is unsupported; expected format 3."
         )
-    return title.strip(), revision.strip(), dictionary_format
+    frequency_mode = index.get("frequencyMode")
+    if frequency_mode is not None and frequency_mode not in {
+        "occurrence-based",
+        "rank-based",
+    }:
+        raise DictionaryImportError("index.json has an invalid frequencyMode.")
+    return title.strip(), revision.strip(), dictionary_format, frequency_mode
 
 
 def _import_term_banks(
@@ -275,6 +290,239 @@ def _import_kanji_banks(
     if batch:
         _insert_kanji(connection, batch)
     return kanji_count
+
+
+def _import_term_meta_banks(
+    connection: sqlite3.Connection,
+    archive: ZipFile,
+    banks: list[ZipInfo],
+    dictionary_id: int,
+    should_cancel: Callable[[], bool] | None,
+) -> int:
+    metadata_count = 0
+    batch: list[tuple[object, ...]] = []
+    for bank in banks:
+        _raise_if_cancelled(should_cancel)
+        rows = _load_json_array(archive, bank)
+        for row_number, row in enumerate(rows, start=1):
+            parsed = _parse_term_meta_row(row, bank.filename, row_number)
+            if parsed is None:
+                continue
+            batch.append((dictionary_id, *parsed))
+            metadata_count += 1
+            if len(batch) >= INSERT_BATCH_SIZE:
+                _raise_if_cancelled(should_cancel)
+                _insert_term_metadata(connection, batch)
+                batch.clear()
+    if batch:
+        _insert_term_metadata(connection, batch)
+    return metadata_count
+
+
+def _parse_term_meta_row(
+    row: object,
+    bank_name: str,
+    row_number: int,
+) -> tuple[object, ...] | None:
+    if not isinstance(row, list) or len(row) != 3:
+        raise DictionaryImportError(
+            f"{bank_name} row {row_number} does not match the format-3 term metadata schema."
+        )
+    expression, mode, data = row
+    if not isinstance(expression, str) or not expression.strip():
+        return None
+    if mode not in {"freq", "pitch", "ipa"}:
+        raise DictionaryImportError(
+            f"{bank_name} row {row_number} has unsupported metadata type {mode!r}."
+        )
+
+    if mode == "freq":
+        reading, canonical_data = _parse_frequency_data(data, bank_name, row_number)
+    elif mode == "pitch":
+        reading, canonical_data = _parse_pitch_data(data, bank_name, row_number)
+    else:
+        reading, canonical_data = _parse_ipa_data(data, bank_name, row_number)
+
+    expression = expression.strip()
+    return (
+        expression,
+        reading,
+        normalize_term(expression),
+        normalize_term(reading),
+        mode,
+        json.dumps(canonical_data, ensure_ascii=False, separators=(",", ":")),
+    )
+
+
+def _parse_frequency_data(
+    data: object,
+    bank_name: str,
+    row_number: int,
+) -> tuple[str, dict[str, object]]:
+    reading = ""
+    frequency = data
+    if isinstance(data, dict) and "reading" in data:
+        if set(data) != {"reading", "frequency"} or not isinstance(data["reading"], str):
+            raise DictionaryImportError(
+                f"{bank_name} row {row_number} has invalid reading-specific frequency data."
+            )
+        reading = data["reading"].strip()
+        frequency = data["frequency"]
+
+    value, display_value = _parse_frequency_value(frequency, bank_name, row_number)
+    return reading, {
+        "reading": reading,
+        "value": value,
+        "display_value": display_value,
+    }
+
+
+def _parse_frequency_value(
+    value: object,
+    bank_name: str,
+    row_number: int,
+) -> tuple[float | None, str]:
+    if isinstance(value, bool):
+        raise DictionaryImportError(f"{bank_name} row {row_number} has invalid frequency data.")
+    if isinstance(value, (int, float)):
+        if not math.isfinite(value):
+            raise DictionaryImportError(f"{bank_name} row {row_number} has a non-finite frequency.")
+        return float(value), str(value)
+    if isinstance(value, str):
+        match = re.search(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)", value)
+        numeric_value = float(match.group(0)) if match else None
+        return numeric_value, value
+    if isinstance(value, dict):
+        if set(value) - {"value", "displayValue"} or "value" not in value:
+            raise DictionaryImportError(f"{bank_name} row {row_number} has invalid frequency data.")
+        numeric_value = value["value"]
+        display_value = value.get("displayValue")
+        if (
+            isinstance(numeric_value, bool)
+            or not isinstance(numeric_value, (int, float))
+            or not math.isfinite(numeric_value)
+            or (display_value is not None and not isinstance(display_value, str))
+        ):
+            raise DictionaryImportError(f"{bank_name} row {row_number} has invalid frequency data.")
+        return float(numeric_value), (
+            display_value if isinstance(display_value, str) else str(numeric_value)
+        )
+    raise DictionaryImportError(f"{bank_name} row {row_number} has invalid frequency data.")
+
+
+def _parse_pitch_data(
+    data: object,
+    bank_name: str,
+    row_number: int,
+) -> tuple[str, dict[str, object]]:
+    if (
+        not isinstance(data, dict)
+        or set(data) - {"reading", "pitches"}
+        or not isinstance(data.get("reading"), str)
+        or not isinstance(data.get("pitches"), list)
+    ):
+        raise DictionaryImportError(f"{bank_name} row {row_number} has invalid pitch data.")
+    reading = data["reading"].strip()
+    pitches: list[dict[str, object]] = []
+    for pitch in data["pitches"]:
+        if not isinstance(pitch, dict) or set(pitch) - {
+            "position",
+            "nasal",
+            "devoice",
+            "tags",
+        }:
+            raise DictionaryImportError(f"{bank_name} row {row_number} has invalid pitch data.")
+        position = pitch.get("position")
+        if not (
+            (isinstance(position, int) and not isinstance(position, bool) and position >= 0)
+            or (isinstance(position, str) and bool(re.fullmatch(r"[HL]+", position)))
+        ):
+            raise DictionaryImportError(
+                f"{bank_name} row {row_number} has an invalid pitch position."
+            )
+        pitches.append(
+            {
+                "position": position,
+                "nasal": _parse_positions(pitch.get("nasal"), bank_name, row_number, "nasal"),
+                "devoice": _parse_positions(pitch.get("devoice"), bank_name, row_number, "devoice"),
+                "tags": _parse_metadata_tags(pitch.get("tags"), bank_name, row_number),
+            }
+        )
+    return reading, {"reading": reading, "pitches": pitches}
+
+
+def _parse_ipa_data(
+    data: object,
+    bank_name: str,
+    row_number: int,
+) -> tuple[str, dict[str, object]]:
+    if (
+        not isinstance(data, dict)
+        or set(data) - {"reading", "transcriptions"}
+        or not isinstance(data.get("reading"), str)
+        or not isinstance(data.get("transcriptions"), list)
+    ):
+        raise DictionaryImportError(f"{bank_name} row {row_number} has invalid IPA data.")
+    reading = data["reading"].strip()
+    transcriptions: list[dict[str, object]] = []
+    for transcription in data["transcriptions"]:
+        if (
+            not isinstance(transcription, dict)
+            or set(transcription) - {"ipa", "tags"}
+            or not isinstance(transcription.get("ipa"), str)
+        ):
+            raise DictionaryImportError(f"{bank_name} row {row_number} has invalid IPA data.")
+        transcriptions.append(
+            {
+                "ipa": transcription["ipa"],
+                "tags": _parse_metadata_tags(transcription.get("tags"), bank_name, row_number),
+            }
+        )
+    return reading, {"reading": reading, "transcriptions": transcriptions}
+
+
+def _parse_positions(
+    value: object,
+    bank_name: str,
+    row_number: int,
+    label: str,
+) -> list[int]:
+    if value is None:
+        return []
+    values = value if isinstance(value, list) else [value]
+    if any(
+        isinstance(position, bool) or not isinstance(position, int) or position < 0
+        for position in values
+    ):
+        raise DictionaryImportError(f"{bank_name} row {row_number} has invalid {label} positions.")
+    return list(dict.fromkeys(values))
+
+
+def _parse_metadata_tags(
+    value: object,
+    bank_name: str,
+    row_number: int,
+) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or any(not isinstance(tag, str) for tag in value):
+        raise DictionaryImportError(f"{bank_name} row {row_number} has invalid metadata tags.")
+    return list(dict.fromkeys(tag for tag in value if tag))
+
+
+def _insert_term_metadata(
+    connection: sqlite3.Connection,
+    batch: list[tuple[object, ...]],
+) -> None:
+    connection.executemany(
+        """
+        INSERT INTO term_metadata(
+            dictionary_id, expression, reading, normalized_expression,
+            normalized_reading, mode, data_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        batch,
+    )
 
 
 def _parse_kanji_row(row: object, bank_name: str, row_number: int) -> tuple[object, ...] | None:

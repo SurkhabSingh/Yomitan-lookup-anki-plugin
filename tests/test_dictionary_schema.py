@@ -48,7 +48,12 @@ class DictionarySchemaTests(unittest.TestCase):
                 "SELECT value FROM schema_meta WHERE key = 'schema_version'"
             ).fetchone()[0]
             dictionary = connection.execute(
-                "SELECT title, kanji_count, has_rule_metadata FROM dictionaries"
+                """
+                SELECT
+                    title, kanji_count, has_rule_metadata,
+                    metadata_count, frequency_mode
+                FROM dictionaries
+                """
             ).fetchone()
             kanji_table = connection.execute(
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'kanji'"
@@ -56,11 +61,15 @@ class DictionarySchemaTests(unittest.TestCase):
             reverse_index = connection.execute(
                 "SELECT name FROM sqlite_master WHERE name = 'term_definitions_fts'"
             ).fetchone()
+            metadata_table = connection.execute(
+                "SELECT name FROM sqlite_master WHERE name = 'term_metadata'"
+            ).fetchone()
 
         self.assertEqual(version, str(SCHEMA_VERSION))
-        self.assertEqual(dictionary, ("Existing", 0, 0))
+        self.assertEqual(dictionary, ("Existing", 0, 0, 0, ""))
         self.assertIsNotNone(kanji_table)
         self.assertIsNotNone(reverse_index)
+        self.assertIsNotNone(metadata_table)
 
     def test_migrates_existing_terms_into_reverse_lookup_index(self) -> None:
         with closing(sqlite3.connect(self.database_path)) as connection, connection:
@@ -124,6 +133,25 @@ class DictionarySchemaTests(unittest.TestCase):
             ).fetchall()
 
         self.assertEqual(capabilities, [("Grammar aware", 1), ("Grammar free", 0)])
+
+    def test_migrates_version_five_database_for_term_metadata(self) -> None:
+        with closing(sqlite3.connect(self.database_path)) as connection, connection:
+            initialize_database(connection)
+            connection.execute("UPDATE schema_meta SET value = '5' WHERE key = 'schema_version'")
+            connection.execute("ALTER TABLE dictionaries DROP COLUMN metadata_count")
+            connection.execute("ALTER TABLE dictionaries DROP COLUMN frequency_mode")
+            connection.commit()
+
+            initialize_database(connection)
+
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(dictionaries)")}
+            version = connection.execute(
+                "SELECT value FROM schema_meta WHERE key = 'schema_version'"
+            ).fetchone()[0]
+
+        self.assertEqual(version, str(SCHEMA_VERSION))
+        self.assertIn("metadata_count", columns)
+        self.assertIn("frequency_mode", columns)
 
 
 def _remove_database(path: Path) -> None:

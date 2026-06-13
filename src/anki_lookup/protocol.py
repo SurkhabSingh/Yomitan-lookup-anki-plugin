@@ -97,6 +97,35 @@ def lookup_result(
                 "entry_type": entry.entry_type,
                 "metadata": dict(entry.metadata),
                 "inflection_reasons": list(entry.inflection_reasons),
+                "frequencies": [
+                    {
+                        "dictionary": item.dictionary,
+                        "value": item.value,
+                        "display_value": item.display_value,
+                        "frequency_mode": item.frequency_mode,
+                    }
+                    for item in entry.frequencies
+                ],
+                "pitch_accents": [
+                    {
+                        "dictionary": item.dictionary,
+                        "reading": item.reading,
+                        "position": item.position,
+                        "nasal_positions": list(item.nasal_positions),
+                        "devoice_positions": list(item.devoice_positions),
+                        "tags": list(item.tags),
+                    }
+                    for item in entry.pitch_accents
+                ],
+                "ipa": [
+                    {
+                        "dictionary": item.dictionary,
+                        "reading": item.reading,
+                        "transcription": item.transcription,
+                        "tags": list(item.tags),
+                    }
+                    for item in entry.ipa
+                ],
             }
             for entry in entries
         ],

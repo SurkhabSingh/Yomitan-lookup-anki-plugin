@@ -68,16 +68,70 @@ test("bounds nested popup depth and respects the feature toggle", () => {
     assert.equal(core.canOpenNestedPopup(0, false, 4), false);
 });
 
+test("groups small kana into Japanese morae", () => {
+    assert.deepEqual(core.japaneseMorae("きょう"), ["きょ", "う"]);
+    assert.deepEqual(core.japaneseMorae("キャット"), ["キャ", "ッ", "ト"]);
+});
+
+test("builds pitch levels from downstep positions and explicit patterns", () => {
+    assert.deepEqual(core.pitchLevels(3, 0), [false, true, true, true]);
+    assert.deepEqual(core.pitchLevels(3, 1), [true, false, false, false]);
+    assert.deepEqual(core.pitchLevels(3, 2), [false, true, false, false]);
+    assert.deepEqual(core.pitchLevels(3, "LHHL"), [false, true, true, false]);
+});
+
+test("identifies every popup descendant regardless of pin state", () => {
+    const root = { parent: null, pinned: true };
+    const child = { parent: root, pinned: false };
+    const pinnedGrandchild = { parent: child, pinned: true };
+    const otherRoot = { parent: null, pinned: false };
+
+    assert.equal(core.isPopupDescendant(child, root), true);
+    assert.equal(core.isPopupDescendant(pinnedGrandchild, root), true);
+    assert.equal(core.isPopupDescendant(pinnedGrandchild, child), true);
+    assert.equal(core.isPopupDescendant(root, root), false);
+    assert.equal(core.isPopupDescendant(otherRoot, root), false);
+});
+
 test("keeps a popup below its scanned text", () => {
+    assert.deepEqual(
+        core.popupPosition(
+            { left: 700, top: 200, bottom: 220 },
+            { width: 300, height: 240 },
+            800,
+            700,
+            12,
+            10,
+        ),
+        { left: 488, top: 230, height: 240, placement: "below" },
+    );
+});
+
+test("places a popup above text near the viewport bottom", () => {
     assert.deepEqual(
         core.popupPosition(
             { left: 700, top: 500, bottom: 520 },
             { width: 300, height: 240 },
             800,
+            600,
             12,
             10,
         ),
-        { left: 488, top: 530 },
+        { left: 488, top: 250, height: 240, placement: "above" },
+    );
+});
+
+test("uses the larger side and constrains height when neither side fits", () => {
+    assert.deepEqual(
+        core.popupPosition(
+            { left: 300, top: 260, bottom: 280 },
+            { width: 300, height: 400 },
+            800,
+            600,
+            12,
+            10,
+        ),
+        { left: 300, top: 290, height: 298, placement: "below" },
     );
 });
 
@@ -88,10 +142,26 @@ test("places a nested popup beside its parent when space is available", () => {
             { left: 200, top: 120, bottom: 140 },
             { width: 280, height: 300 },
             1000,
+            700,
             12,
             10,
         ),
-        { left: 510, top: 150 },
+        { left: 510, top: 150, height: 300, placement: "below" },
+    );
+});
+
+test("places a nested popup above a bottom-edge scan target", () => {
+    assert.deepEqual(
+        core.nestedPopupPosition(
+            { left: 100, right: 500 },
+            { left: 200, top: 560, bottom: 580 },
+            { width: 280, height: 300 },
+            1000,
+            700,
+            12,
+            10,
+        ),
+        { left: 510, top: 250, height: 300, placement: "above" },
     );
 });
 

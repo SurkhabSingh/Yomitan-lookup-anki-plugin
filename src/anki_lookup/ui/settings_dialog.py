@@ -6,6 +6,7 @@ from copy import deepcopy
 from typing import Any
 
 from ..config import DEFAULT_CONFIG, runtime_config, validated_shortcut
+from ..runtime import dictionary_service
 
 THEMES = (
     ("Follow Anki / system", "system"),
@@ -16,6 +17,11 @@ THEMES = (
 DICTIONARY_LAYOUTS = (
     ("Dictionary buttons in Sources", "source_rail"),
     ("Continuous dictionary results", "continuous"),
+)
+FREQUENCY_SORT_ORDERS = (
+    ("Automatic from dictionary metadata", "auto"),
+    ("Lower numbers first", "ascending"),
+    ("Higher numbers first", "descending"),
 )
 
 
@@ -48,7 +54,7 @@ class SettingsDialog:
 
         self.dialog = QDialog(parent)
         self.dialog.setWindowTitle("Anki Lookup Settings")
-        self.dialog.resize(520, 320)
+        self.dialog.resize(560, 400)
         layout = QVBoxLayout(self.dialog)
 
         description = QLabel(
@@ -85,6 +91,37 @@ class SettingsDialog:
         self.dictionary_layout.setCurrentIndex(max(0, layout_index))
         form.addRow("Dictionary layout", self.dictionary_layout)
 
+        self.frequency_sort_source = QComboBox()
+        self.frequency_sort_source.addItem("No frequency ordering", 0)
+        for source in dictionary_service().list_frequency_sources():
+            label = f"{source.title} ({source.revision})"
+            if source.frequency_mode:
+                label += f" - {source.frequency_mode}"
+            if not source.enabled:
+                label += " - disabled"
+            self.frequency_sort_source.addItem(label, source.id)
+        frequency_source_index = self.frequency_sort_source.findData(
+            config["lookup"]["frequency_sort_dictionary_id"]
+        )
+        self.frequency_sort_source.setCurrentIndex(max(0, frequency_source_index))
+        self.frequency_sort_source.setToolTip(
+            "Choose one imported frequency dictionary to order otherwise-equivalent lookup results."
+        )
+        form.addRow("Frequency ordering", self.frequency_sort_source)
+
+        self.frequency_sort_order = QComboBox()
+        for label, value in FREQUENCY_SORT_ORDERS:
+            self.frequency_sort_order.addItem(label, value)
+        frequency_order_index = self.frequency_sort_order.findData(
+            config["lookup"]["frequency_sort_order"]
+        )
+        self.frequency_sort_order.setCurrentIndex(max(0, frequency_order_index))
+        self.frequency_sort_order.setToolTip(
+            "Automatic puts lower rank values first and higher occurrence values first. "
+            "Sources without a declared mode use lower numbers first."
+        )
+        form.addRow("Frequency order", self.frequency_sort_order)
+
         self.pin_shortcut = QLineEdit(config["lookup"]["pin_shortcut"])
         self.pin_shortcut.setPlaceholderText("Ctrl+Shift+K")
         self.pin_shortcut.setToolTip(
@@ -92,6 +129,8 @@ class SettingsDialog:
         )
         form.addRow("Pin / unpin shortcut", self.pin_shortcut)
         layout.addLayout(form)
+        self.frequency_sort_source.currentIndexChanged.connect(self._update_frequency_order_state)
+        self._update_frequency_order_state()
 
         note = QLabel(
             "Pinned popups stay open, are not replaced by later scans, and can be dragged "
@@ -127,6 +166,8 @@ class SettingsDialog:
         lookup = candidate.setdefault("lookup", {})
         appearance = candidate.setdefault("appearance", {})
         lookup["pin_shortcut"] = normalized_shortcut
+        lookup["frequency_sort_dictionary_id"] = int(self.frequency_sort_source.currentData())
+        lookup["frequency_sort_order"] = self.frequency_sort_order.currentData()
         appearance["theme"] = self.theme.currentData()
         appearance["font_family"] = self.font_family.currentFont().family()
         appearance["font_size_px"] = self.font_size.value()
@@ -152,12 +193,18 @@ class SettingsDialog:
 
         from aqt import mw
 
+        from ..hooks import apply_runtime_config
+
+        apply_runtime_config(config)
         reviewer = getattr(mw, "reviewer", None) if mw is not None else None
         web = getattr(reviewer, "web", None)
         if web is None:
             return
         payload = json.dumps(config, ensure_ascii=False).replace("</", "<\\/")
         web.eval(f"window.AnkiLookupApplyConfig && window.AnkiLookupApplyConfig({payload});")
+
+    def _update_frequency_order_state(self) -> None:
+        self.frequency_sort_order.setEnabled(bool(self.frequency_sort_source.currentData()))
 
 
 def show_settings_dialog(parent: Any) -> None:

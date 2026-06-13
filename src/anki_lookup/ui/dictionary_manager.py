@@ -39,8 +39,9 @@ class DictionaryManager:
 
         layout = QVBoxLayout(self.dialog)
         description = QLabel(
-            "Import Yomitan format-3 term and kanji dictionaries. Dictionary files stay "
-            "on this computer and are indexed in Anki Lookup's user data."
+            "Import Yomitan format-3 term, kanji, frequency, pitch, and IPA dictionaries. "
+            "Dictionary files stay on this computer and are indexed in Anki Lookup's "
+            "user data."
         )
         description.setWordWrap(True)
         layout.addWidget(description)
@@ -95,7 +96,9 @@ class DictionaryManager:
                     f"Revision: {dictionary.revision}\n"
                     f"Format: {dictionary.format}\n"
                     f"Terms: {dictionary.term_count:,}\n"
-                    f"Kanji: {dictionary.kanji_count:,}"
+                    f"Kanji: {dictionary.kanji_count:,}\n"
+                    f"Metadata: {dictionary.metadata_count:,}\n"
+                    f"Frequency mode: {dictionary.frequency_mode or 'not specified'}"
                 )
                 self.list_widget.addItem(item)
                 if dictionary.id == select_id:
@@ -145,10 +148,12 @@ class DictionaryManager:
         imported_count = len(result.imported)
         total_terms = sum(item.dictionary.term_count for item in result.imported)
         total_kanji = sum(item.dictionary.kanji_count for item in result.imported)
+        total_metadata = sum(item.dictionary.metadata_count for item in result.imported)
         summary = (
             f"Imported {imported_count} "
             f"{'dictionary' if imported_count == 1 else 'dictionaries'}: "
-            f"{total_terms:,} terms and {total_kanji:,} kanji."
+            f"{total_terms:,} terms, {total_kanji:,} kanji, and "
+            f"{total_metadata:,} metadata records."
         )
         if result.cancelled:
             summary += " Remaining imports were cancelled."
@@ -270,5 +275,7 @@ def _dictionary_label(dictionary: DictionaryInfo) -> str:
         parts.append(f"{dictionary.term_count:,} terms")
     if dictionary.kanji_count:
         parts.append(f"{dictionary.kanji_count:,} kanji")
+    if dictionary.metadata_count:
+        parts.append(f"{dictionary.metadata_count:,} metadata")
     count_label = ", ".join(parts) or "no searchable entries"
     return f"{dictionary.title} - {count_label}"

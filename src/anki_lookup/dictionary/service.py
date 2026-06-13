@@ -9,7 +9,15 @@ from pathlib import Path
 from ..language import language_profiles
 from ..language.models import MorphologyCandidate
 from .importer import DictionaryImportCancelled, import_dictionary
-from .models import BatchImportResult, DictionaryInfo, ImportFailure, ImportResult, LookupEntry
+from .models import (
+    BatchImportResult,
+    DictionaryInfo,
+    FrequencySortPolicy,
+    FrequencySourceInfo,
+    ImportFailure,
+    ImportResult,
+    LookupEntry,
+)
 from .normalization import normalize_term
 from .repository import DictionaryRepository
 
@@ -49,14 +57,30 @@ class DictionaryService:
     def list_dictionaries(self) -> list[DictionaryInfo]:
         return self.repository.list_dictionaries()
 
-    def lookup(self, term: str, limit: int = 20) -> list[LookupEntry]:
-        return self.repository.search(term, limit)
+    def list_frequency_sources(self) -> list[FrequencySourceInfo]:
+        return self.repository.list_frequency_sources()
+
+    def lookup(
+        self,
+        term: str,
+        limit: int = 20,
+        frequency_sort: FrequencySortPolicy | None = None,
+    ) -> list[LookupEntry]:
+        return self.repository.search(term, limit, frequency_sort=frequency_sort)
 
     def lookup_candidates(
-        self, candidates: tuple[str, ...], fallback: str, limit: int = 20
+        self,
+        candidates: tuple[str, ...],
+        fallback: str,
+        limit: int = 20,
+        frequency_sort: FrequencySortPolicy | None = None,
     ) -> tuple[str, list[LookupEntry]]:
         source_candidates = tuple(dict.fromkeys(candidates or (fallback,)))
-        direct_matches = self.repository.search_exact_many(source_candidates, limit)
+        direct_matches = self.repository.search_exact_many(
+            source_candidates,
+            limit,
+            frequency_sort=frequency_sort,
+        )
         grouped_results: list[tuple[str, list[LookupEntry]]] = []
         seen: set[tuple[str, str, str, tuple[str, ...]]] = set()
 
@@ -82,6 +106,7 @@ class DictionaryService:
                     required_rules=self._required_rules_by_term(transformed),
                     direct_match_type="deinflected",
                     include_kanji=False,
+                    frequency_sort=frequency_sort,
                 )
                 if transformed and len(results) < limit
                 else {}
@@ -107,7 +132,11 @@ class DictionaryService:
                         seen,
                         [
                             entry
-                            for entry in self.repository.search(reverse_term, limit)
+                            for entry in self.repository.search(
+                                reverse_term,
+                                limit,
+                                frequency_sort=frequency_sort,
+                            )
                             if entry.match_type == "definition"
                         ],
                         (),
@@ -119,7 +148,7 @@ class DictionaryService:
         if grouped_results:
             return grouped_results[0][0], self._merge_source_groups(grouped_results, limit)
 
-        return fallback, self.lookup(fallback, limit)
+        return fallback, self.lookup(fallback, limit, frequency_sort)
 
     @staticmethod
     def _coalesce_expansions(

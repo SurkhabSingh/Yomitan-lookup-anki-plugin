@@ -65,8 +65,11 @@
     display: flex;
     flex: none;
     align-items: center;
+    justify-content: flex-start;
+    gap: 2px;
     min-height: 26px;
-    padding: 6px 8px;
+    padding: 3px 5px;
+    direction: ltr;
     background: var(--anki-lookup-bg);
     border-bottom: 1px solid var(--anki-lookup-border);
     border-radius: 9px 9px 0 0;
@@ -76,7 +79,19 @@
     cursor: move;
 }
 
-.anki-lookup-popup .anki-lookup__pin-indicator {
+.anki-lookup-popup .anki-lookup__header-control {
+    display: inline-flex;
+    width: 22px;
+    min-width: 22px;
+    height: 22px;
+    min-height: 22px;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border-radius: 5px;
+}
+
+.anki-lookup-popup .anki-lookup__pin-icon {
     position: relative;
     display: block;
     width: 11px;
@@ -86,7 +101,7 @@
     transform: rotate(35deg);
 }
 
-.anki-lookup-popup .anki-lookup__pin-indicator::before {
+.anki-lookup-popup .anki-lookup__pin-icon::before {
     position: absolute;
     top: 0;
     left: 2px;
@@ -97,7 +112,7 @@
     border-radius: 2px 2px 1px 1px;
 }
 
-.anki-lookup-popup .anki-lookup__pin-indicator::after {
+.anki-lookup-popup .anki-lookup__pin-icon::after {
     position: absolute;
     top: 6px;
     left: 5px;
@@ -108,9 +123,41 @@
     border-radius: 999px;
 }
 
-.anki-lookup-popup.anki-lookup--pinned .anki-lookup__pin-indicator {
+.anki-lookup-popup.anki-lookup--pinned .anki-lookup__pin-icon {
     color: var(--anki-lookup-accent);
     opacity: 1;
+}
+
+.anki-lookup-popup .anki-lookup__close-icon {
+    position: relative;
+    display: block;
+    width: 11px;
+    height: 11px;
+    color: var(--anki-lookup-muted);
+}
+
+.anki-lookup-popup .anki-lookup__close-icon::before,
+.anki-lookup-popup .anki-lookup__close-icon::after {
+    position: absolute;
+    top: 5px;
+    left: 0;
+    width: 11px;
+    height: 1.5px;
+    content: "";
+    background: currentcolor;
+    border-radius: 999px;
+}
+
+.anki-lookup-popup .anki-lookup__close-icon::before {
+    transform: rotate(45deg);
+}
+
+.anki-lookup-popup .anki-lookup__close-icon::after {
+    transform: rotate(-45deg);
+}
+
+.anki-lookup-popup .anki-lookup__close:hover .anki-lookup__close-icon {
+    color: var(--anki-lookup-error);
 }
 
 .anki-lookup-popup button {
@@ -360,6 +407,99 @@
     text-transform: uppercase;
 }
 
+.anki-lookup-popup .anki-lookup__lexical-metadata {
+    display: grid;
+    gap: 3px;
+    margin: -3px 0 9px;
+}
+
+.anki-lookup-popup .anki-lookup__lexical-row {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 5px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 1px 0 2px;
+    scrollbar-color: var(--anki-lookup-border) transparent;
+    scrollbar-width: thin;
+}
+
+.anki-lookup-popup .anki-lookup__lexical-item {
+    display: inline-flex;
+    min-width: max-content;
+    flex: none;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 6px;
+    color: var(--anki-lookup-fg);
+    background: var(--anki-lookup-surface);
+    border: 1px solid var(--anki-lookup-border);
+    border-radius: 5px;
+    font-size: 0.71em;
+    line-height: 1.35;
+}
+
+.anki-lookup-popup .anki-lookup__lexical-source {
+    max-width: 11em;
+    overflow: hidden;
+    color: var(--anki-lookup-muted);
+    font-weight: 650;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.anki-lookup-popup .anki-lookup__pitch {
+    display: inline-flex;
+    align-items: flex-start;
+    padding-top: 2px;
+}
+
+.anki-lookup-popup .anki-lookup__pitch-mora {
+    position: relative;
+    display: inline-block;
+    padding: 1px 1px 0;
+    border-top: 1.5px solid transparent;
+}
+
+.anki-lookup-popup .anki-lookup__pitch-mora[data-pitch="high"] {
+    border-top-color: var(--anki-lookup-accent);
+}
+
+.anki-lookup-popup .anki-lookup__pitch-mora[data-downstep="true"] {
+    border-inline-end: 1.5px solid var(--anki-lookup-accent);
+}
+
+.anki-lookup-popup .anki-lookup__pitch-mora[data-nasal="true"]::after {
+    position: absolute;
+    top: -0.72em;
+    inset-inline-end: -0.08em;
+    color: var(--anki-lookup-accent);
+    content: "゜";
+    font-size: 0.72em;
+}
+
+.anki-lookup-popup .anki-lookup__pitch-mora[data-devoice="true"] {
+    text-decoration: underline dotted;
+    text-decoration-color: var(--anki-lookup-muted);
+    text-underline-offset: 0.12em;
+}
+
+.anki-lookup-popup .anki-lookup__pitch-position {
+    color: var(--anki-lookup-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.anki-lookup-popup .anki-lookup__ipa {
+    font-family: var(--anki-lookup-font-family, inherit);
+}
+
+.anki-lookup-popup .anki-lookup__frequency-value {
+    color: var(--anki-lookup-accent);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
 .anki-lookup-popup .anki-lookup__tags {
     display: flex;
     flex-wrap: wrap;
@@ -510,6 +650,24 @@
     border-right: 2px solid var(--anki-lookup-muted);
     border-bottom: 2px solid var(--anki-lookup-muted);
     opacity: 0.5;
+}
+
+.anki-lookup-popup.anki-lookup--above:not(.anki-lookup--resizing)
+    .anki-lookup__resize,
+.anki-lookup-popup.anki-lookup--resize-from-top .anki-lookup__resize {
+    top: 0;
+    bottom: auto;
+    cursor: ne-resize;
+}
+
+.anki-lookup-popup.anki-lookup--above:not(.anki-lookup--resizing)
+    .anki-lookup__resize::before,
+.anki-lookup-popup.anki-lookup--resize-from-top .anki-lookup__resize::before {
+    top: 3px;
+    bottom: auto;
+    border-top: 2px solid var(--anki-lookup-muted);
+    border-right: 2px solid var(--anki-lookup-muted);
+    border-bottom: 0;
 }
 
 .anki-lookup-popup .anki-lookup__resize:hover::before,

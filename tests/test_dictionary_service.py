@@ -4,6 +4,7 @@ from zipfile import ZipFile
 
 from dictionary_helpers import artifact_path, write_dictionary
 
+from anki_lookup.dictionary.models import FrequencySortPolicy
 from anki_lookup.dictionary.service import DictionaryService
 
 
@@ -12,14 +13,17 @@ class DictionaryServiceTests(unittest.TestCase):
         self.database_path = artifact_path("service.sqlite3")
         self.valid_archive = artifact_path("service-valid.zip")
         self.invalid_archive = artifact_path("service-invalid.zip")
+        self.metadata_archive = artifact_path("service-metadata.zip")
         _remove_database(self.database_path)
         self.valid_archive.unlink(missing_ok=True)
         self.invalid_archive.unlink(missing_ok=True)
+        self.metadata_archive.unlink(missing_ok=True)
 
     def tearDown(self) -> None:
         _remove_database(self.database_path)
         self.valid_archive.unlink(missing_ok=True)
         self.invalid_archive.unlink(missing_ok=True)
+        self.metadata_archive.unlink(missing_ok=True)
 
     def test_batch_import_keeps_successes_and_reports_failures(self) -> None:
         write_dictionary(self.valid_archive, title="Valid")
@@ -99,6 +103,77 @@ class DictionaryServiceTests(unittest.TestCase):
         self.assertEqual(entries[0].expression, "食べる")
         self.assertEqual(entries[0].match_type, "deinflected")
         self.assertEqual(entries[0].inflection_reasons, ("-て", "-いる", "-た"))
+
+    def test_deinflected_lookup_includes_base_headword_metadata(self) -> None:
+        write_dictionary(
+            self.valid_archive,
+            title="Japanese",
+            terms=[
+                ["食べる", "たべる", "", "v1", 0, ["to eat"], 1, ""],
+            ],
+        )
+        write_dictionary(
+            self.metadata_archive,
+            title="Pitch",
+            terms=[],
+            extra_files={
+                "term_meta_bank_1.json": [
+                    [
+                        "食べる",
+                        "pitch",
+                        {
+                            "reading": "たべる",
+                            "pitches": [{"position": 2}],
+                        },
+                    ]
+                ]
+            },
+        )
+        service = DictionaryService(self.database_path)
+        service.import_archive(self.valid_archive)
+        service.import_archive(self.metadata_archive)
+
+        _, entries = service.lookup_candidates(("食べていた",), "食べていた")
+
+        self.assertEqual(entries[0].expression, "食べる")
+        self.assertEqual(entries[0].pitch_accents[0].position, 2)
+
+    def test_lookup_candidates_applies_frequency_sorting(self) -> None:
+        write_dictionary(
+            self.valid_archive,
+            title="Terms",
+            terms=[
+                ["less-common", "shared", "", "", 100, ["less common"], 1, ""],
+                ["common", "shared", "", "", 10, ["common"], 2, ""],
+                ["unknown", "shared", "", "", 200, ["unknown"], 3, ""],
+            ],
+        )
+        write_dictionary(
+            self.metadata_archive,
+            title="Frequency",
+            terms=[],
+            index_extra={"frequencyMode": "rank-based"},
+            extra_files={
+                "term_meta_bank_1.json": [
+                    ["less-common", "freq", 500],
+                    ["common", "freq", 10],
+                ]
+            },
+        )
+        service = DictionaryService(self.database_path)
+        service.import_archive(self.valid_archive)
+        frequency = service.import_archive(self.metadata_archive).dictionary
+
+        _, entries = service.lookup_candidates(
+            ("shared",),
+            "shared",
+            frequency_sort=FrequencySortPolicy(frequency.id),
+        )
+
+        self.assertEqual(
+            [entry.expression for entry in entries],
+            ["common", "less-common", "unknown"],
+        )
 
     def test_lookup_candidates_accepts_special_godan_dictionary_rules(self) -> None:
         write_dictionary(

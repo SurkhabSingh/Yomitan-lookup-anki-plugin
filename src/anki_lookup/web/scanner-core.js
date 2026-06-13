@@ -11,6 +11,7 @@
 
     const JAPANESE_CHARACTER_PATTERN =
         /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}々〆ヶー]/u;
+    const SMALL_KANA_PATTERN = /[ぁぃぅぇぉゃゅょゎァィゥェォャュョヮ]/u;
     const segmenters = new Map();
 
     function getSegmenter(locale, granularity) {
@@ -188,15 +189,119 @@
         return enabled && sourceDepth + 1 < maximumDepth;
     }
 
-    function popupPosition(anchor, size, viewportWidth, margin, gap) {
+    function japaneseMorae(reading) {
+        const morae = [];
+        for (const character of Array.from(reading || "")) {
+            if (SMALL_KANA_PATTERN.test(character) && morae.length) {
+                morae[morae.length - 1] += character;
+            } else {
+                morae.push(character);
+            }
+        }
+        return morae;
+    }
+
+    function pitchLevels(moraCount, position) {
+        const count = Math.max(0, moraCount);
+        if (typeof position === "string" && /^[HL]+$/u.test(position)) {
+            const values = Array.from(position, (level) => level === "H");
+            while (values.length < count + 1) {
+                values.push(values[values.length - 1] || false);
+            }
+            return values.slice(0, count + 1);
+        }
+        const downstep =
+            Number.isInteger(position) && position >= 0 ? position : 0;
+        const levels = [];
+        for (let index = 0; index <= count; index += 1) {
+            if (downstep === 0) {
+                levels.push(index > 0);
+            } else if (downstep === 1) {
+                levels.push(index === 0);
+            } else {
+                levels.push(index > 0 && index < downstep);
+            }
+        }
+        return levels;
+    }
+
+    function isPopupDescendant(state, ancestor) {
+        let parent = state.parent;
+        while (parent) {
+            if (parent === ancestor) {
+                return true;
+            }
+            parent = parent.parent;
+        }
+        return false;
+    }
+
+    function anchoredVerticalPosition(
+        anchor,
+        requestedHeight,
+        viewportHeight,
+        margin,
+        gap,
+    ) {
+        const viewportHeightAvailable = Math.max(0, viewportHeight - margin * 2);
+        if (!anchor) {
+            return {
+                top: margin,
+                height: Math.min(requestedHeight, viewportHeightAvailable),
+                placement: "below",
+            };
+        }
+
+        const belowTop = Math.max(
+            margin,
+            Math.min(anchor.bottom + gap, viewportHeight - margin),
+        );
+        const aboveBottom = Math.max(
+            margin,
+            Math.min(anchor.top - gap, viewportHeight - margin),
+        );
+        const availableBelow = Math.max(
+            0,
+            viewportHeight - margin - belowTop,
+        );
+        const availableAbove = Math.max(0, aboveBottom - margin);
+        const placement =
+            availableBelow >= requestedHeight || availableBelow >= availableAbove
+                ? "below"
+                : "above";
+        const availableHeight =
+            placement === "above" ? availableAbove : availableBelow;
+        const height = Math.min(requestedHeight, availableHeight);
+
+        return {
+            top: placement === "above" ? aboveBottom - height : belowTop,
+            height,
+            placement,
+        };
+    }
+
+    function popupPosition(
+        anchor,
+        size,
+        viewportWidth,
+        viewportHeight,
+        margin,
+        gap,
+    ) {
         const preferredLeft = anchor ? anchor.left : (viewportWidth - size.width) / 2;
-        const below = anchor ? anchor.bottom + gap : margin;
+        const vertical = anchoredVerticalPosition(
+            anchor,
+            size.height,
+            viewportHeight,
+            margin,
+            gap,
+        );
         return {
             left: Math.max(
                 margin,
                 Math.min(preferredLeft, viewportWidth - size.width - margin),
             ),
-            top: Math.max(margin, below),
+            ...vertical,
         };
     }
 
@@ -205,6 +310,7 @@
         anchor,
         size,
         viewportWidth,
+        viewportHeight,
         margin,
         gap,
     ) {
@@ -216,12 +322,19 @@
                 : left >= margin
                   ? left
                   : anchor.left;
+        const vertical = anchoredVerticalPosition(
+            anchor,
+            size.height,
+            viewportHeight,
+            margin,
+            gap,
+        );
         return {
             left: Math.max(
                 margin,
                 Math.min(preferredLeft, viewportWidth - size.width - margin),
             ),
-            top: Math.max(margin, anchor.bottom + gap),
+            ...vertical,
         };
     }
 
@@ -330,12 +443,15 @@
         clampPopupSize,
         clampDraggedPopupPosition,
         canOpenNestedPopup,
+        isPopupDescendant,
+        japaneseMorae,
         japaneseCandidates,
         lookupCandidates,
         lookupDelay,
         matchesShortcut,
         nestedPopupPosition,
         normalizeTerm,
+        pitchLevels,
         popupPosition,
         sanitizeSentence,
         segmentAt,

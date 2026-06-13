@@ -16,6 +16,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "maximum_term_length": 200,
         "allow_nested_popups": True,
         "maximum_popup_depth": 4,
+        "frequency_sort_dictionary_id": 0,
+        "frequency_sort_order": "auto",
     },
     "appearance": {
         "theme": "system",
@@ -29,6 +31,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
 
 ALLOWED_MODIFIERS = {"Shift", "Control", "Alt", "Meta"}
 ALLOWED_RELEASE_BEHAVIORS = {"close", "remain_open"}
+ALLOWED_FREQUENCY_SORT_ORDERS = {"auto", "ascending", "descending"}
 ALLOWED_THEMES = {"system", "light", "dark", "high_contrast"}
 ALLOWED_DICTIONARY_LAYOUTS = {"source_rail", "continuous"}
 
@@ -50,6 +53,14 @@ def runtime_config(raw_config: object) -> dict[str, Any]:
     lookup["debounce_ms"] = _bounded_int(lookup["debounce_ms"], 0, 250, 20)
     lookup["maximum_term_length"] = _bounded_int(lookup["maximum_term_length"], 1, 500, 200)
     lookup["maximum_popup_depth"] = _bounded_int(lookup["maximum_popup_depth"], 1, 8, 4)
+    lookup["frequency_sort_dictionary_id"] = _bounded_int(
+        lookup["frequency_sort_dictionary_id"],
+        0,
+        2_147_483_647,
+        0,
+    )
+    if lookup["frequency_sort_order"] not in ALLOWED_FREQUENCY_SORT_ORDERS:
+        lookup["frequency_sort_order"] = DEFAULT_CONFIG["lookup"]["frequency_sort_order"]
     lookup["selection_shortcut"] = validated_shortcut(
         lookup["selection_shortcut"],
         DEFAULT_CONFIG["lookup"]["selection_shortcut"],

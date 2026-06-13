@@ -4,6 +4,7 @@ from pathlib import Path
 from dictionary_helpers import artifact_path, write_dictionary
 
 from anki_lookup.dictionary.importer import import_dictionary
+from anki_lookup.dictionary.models import FrequencySortPolicy
 from anki_lookup.dictionary.repository import DictionaryRepository
 
 
@@ -14,7 +15,7 @@ class DictionaryRepositoryTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         _remove_database(self.database_path)
-        for name in ("first.zip", "second.zip", "third.zip"):
+        for name in ("first.zip", "second.zip", "third.zip", "metadata.zip"):
             artifact_path(name).unlink(missing_ok=True)
 
     def test_lookup_keeps_exact_matches_ahead_of_reverse_definition_matches(self) -> None:
@@ -170,6 +171,232 @@ class DictionaryRepositoryTests(unittest.TestCase):
         remaining = repository.list_dictionaries()
         self.assertEqual([item.title for item in remaining], ["Dictionary 1"])
         self.assertEqual(remaining[0].priority, 0)
+
+    def test_lookup_enriches_headword_from_independent_metadata_sources(self) -> None:
+        term_archive = artifact_path("first.zip")
+        metadata_archive = artifact_path("metadata.zip")
+        write_dictionary(
+            term_archive,
+            title="Terms",
+            terms=[["食べる", "たべる", "", "v1", 1, ["to eat"], 1, ""]],
+        )
+        write_dictionary(
+            metadata_archive,
+            title="Learning Metadata",
+            terms=[],
+            index_extra={"frequencyMode": "rank-based"},
+            extra_files={
+                "term_meta_bank_1.json": [
+                    ["食べる", "freq", {"reading": "たべる", "frequency": "125㋕"}],
+                    ["食べる", "freq", {"reading": "たべない", "frequency": 999}],
+                    [
+                        "食べる",
+                        "pitch",
+                        {
+                            "reading": "たべる",
+                            "pitches": [
+                                {
+                                    "position": 2,
+                                    "nasal": 1,
+                                    "devoice": [3],
+                                    "tags": ["standard"],
+                                },
+                                {"position": "LHHL"},
+                            ],
+                        },
+                    ],
+                    [
+                        "食べる",
+                        "ipa",
+                        {
+                            "reading": "たべる",
+                            "transcriptions": [{"ipa": "tabe\u027e\u026f", "tags": ["Tokyo"]}],
+                        },
+                    ],
+                ]
+            },
+        )
+        import_dictionary(self.database_path, term_archive)
+        metadata_dictionary = import_dictionary(self.database_path, metadata_archive).dictionary
+        repository = DictionaryRepository(self.database_path)
+
+        entry = repository.search("食べる")[0]
+
+        self.assertEqual(
+            [
+                (item.dictionary, item.value, item.display_value, item.frequency_mode)
+                for item in entry.frequencies
+            ],
+            [("Learning Metadata", 125.0, "125㋕", "rank-based")],
+        )
+        self.assertEqual(
+            [item.position for item in entry.pitch_accents],
+            [2, "LHHL"],
+        )
+        self.assertEqual(entry.pitch_accents[0].nasal_positions, (1,))
+        self.assertEqual(entry.pitch_accents[0].devoice_positions, (3,))
+        self.assertEqual(
+            [(item.transcription, item.tags) for item in entry.ipa],
+            [("tabe\u027e\u026f", ("Tokyo",))],
+        )
+
+        repository.set_enabled(metadata_dictionary.id, False)
+        self.assertEqual(repository.search("食べる")[0].frequencies, ())
+        repository.set_enabled(metadata_dictionary.id, True)
+        repository.remove(metadata_dictionary.id)
+        self.assertEqual(repository.search("食べる")[0].pitch_accents, ())
+
+    def test_frequency_sort_uses_selected_source_and_keeps_missing_values_last(
+        self,
+    ) -> None:
+        term_archive = artifact_path("first.zip")
+        rank_archive = artifact_path("second.zip")
+        occurrence_archive = artifact_path("third.zip")
+        terms = [
+            [f"term-{index}", "shared", "", "", 100 - index, [f"entry {index}"], index, ""]
+            for index in range(30)
+        ]
+        write_dictionary(term_archive, title="Terms", terms=terms)
+        write_dictionary(
+            rank_archive,
+            title="Rank Frequency",
+            terms=[],
+            index_extra={"frequencyMode": "rank-based"},
+            extra_files={
+                "term_meta_bank_1.json": [
+                    ["term-0", "freq", 500],
+                    ["term-29", "freq", 10],
+                ]
+            },
+        )
+        write_dictionary(
+            occurrence_archive,
+            title="Occurrence Frequency",
+            terms=[],
+            index_extra={"frequencyMode": "occurrence-based"},
+            extra_files={
+                "term_meta_bank_1.json": [
+                    ["term-0", "freq", 50_000],
+                    ["term-29", "freq", 100],
+                ]
+            },
+        )
+        import_dictionary(self.database_path, term_archive)
+        rank_source = import_dictionary(self.database_path, rank_archive).dictionary
+        occurrence_source = import_dictionary(self.database_path, occurrence_archive).dictionary
+        repository = DictionaryRepository(self.database_path)
+
+        default_results = repository.search("shared", limit=3)
+        rank_results = repository.search(
+            "shared",
+            limit=3,
+            frequency_sort=FrequencySortPolicy(rank_source.id),
+        )
+        occurrence_results = repository.search(
+            "shared",
+            limit=3,
+            frequency_sort=FrequencySortPolicy(occurrence_source.id),
+        )
+        overridden_results = repository.search(
+            "shared",
+            limit=3,
+            frequency_sort=FrequencySortPolicy(rank_source.id, "descending"),
+        )
+        repository.set_enabled(rank_source.id, False)
+        disabled_source_results = repository.search(
+            "shared",
+            limit=3,
+            frequency_sort=FrequencySortPolicy(rank_source.id),
+        )
+
+        self.assertEqual(
+            [entry.expression for entry in default_results],
+            ["term-0", "term-1", "term-2"],
+        )
+        self.assertEqual(
+            [entry.expression for entry in rank_results],
+            ["term-29", "term-0", "term-1"],
+        )
+        self.assertEqual(
+            [entry.expression for entry in occurrence_results],
+            ["term-0", "term-29", "term-1"],
+        )
+        self.assertEqual(
+            [entry.expression for entry in overridden_results],
+            ["term-0", "term-29", "term-1"],
+        )
+        self.assertEqual(
+            [entry.expression for entry in disabled_source_results],
+            ["term-0", "term-1", "term-2"],
+        )
+
+    def test_lists_only_actual_frequency_metadata_sources(self) -> None:
+        rank_archive = artifact_path("second.zip")
+        pitch_archive = artifact_path("metadata.zip")
+        write_dictionary(
+            rank_archive,
+            title="Frequency",
+            terms=[],
+            index_extra={"frequencyMode": "rank-based"},
+            extra_files={"term_meta_bank_1.json": [["term", "freq", 10]]},
+        )
+        write_dictionary(
+            pitch_archive,
+            title="Pitch",
+            terms=[],
+            extra_files={
+                "term_meta_bank_1.json": [
+                    [
+                        "term",
+                        "pitch",
+                        {"reading": "term", "pitches": [{"position": 0}]},
+                    ]
+                ]
+            },
+        )
+        frequency = import_dictionary(self.database_path, rank_archive).dictionary
+        import_dictionary(self.database_path, pitch_archive)
+        repository = DictionaryRepository(self.database_path)
+
+        sources = repository.list_frequency_sources()
+
+        self.assertEqual([source.id for source in sources], [frequency.id])
+        self.assertEqual(sources[0].frequency_mode, "rank-based")
+
+    def test_frequency_sort_does_not_displace_an_exact_expression_match(self) -> None:
+        term_archive = artifact_path("first.zip")
+        frequency_archive = artifact_path("second.zip")
+        write_dictionary(
+            term_archive,
+            title="Terms",
+            terms=[
+                ["shared", "", "", "", 1, ["exact"], 1, ""],
+                ["other", "shared", "", "", 100, ["reading"], 2, ""],
+            ],
+        )
+        write_dictionary(
+            frequency_archive,
+            title="Frequency",
+            terms=[],
+            index_extra={"frequencyMode": "rank-based"},
+            extra_files={
+                "term_meta_bank_1.json": [
+                    ["shared", "freq", 1_000],
+                    ["other", "freq", 1],
+                ]
+            },
+        )
+        import_dictionary(self.database_path, term_archive)
+        frequency = import_dictionary(self.database_path, frequency_archive).dictionary
+        repository = DictionaryRepository(self.database_path)
+
+        entries = repository.search(
+            "shared",
+            frequency_sort=FrequencySortPolicy(frequency.id),
+        )
+
+        self.assertEqual([entry.expression for entry in entries], ["shared", "other"])
+        self.assertEqual([entry.match_type for entry in entries], ["exact", "reading"])
 
 
 def _remove_database(path: Path) -> None:

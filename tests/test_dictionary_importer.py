@@ -134,6 +134,69 @@ class DictionaryImporterTests(unittest.TestCase):
 
         self.assertEqual(DictionaryRepository(self.database_path).list_dictionaries(), [])
 
+    def test_imports_metadata_only_frequency_pitch_and_ipa_archive(self) -> None:
+        write_dictionary(
+            self.archive_path,
+            title="Metadata",
+            terms=[],
+            index_extra={"frequencyMode": "rank-based"},
+            extra_files={
+                "term_meta_bank_1.json": [
+                    ["食べる", "freq", {"reading": "たべる", "frequency": 125}],
+                    [
+                        "食べる",
+                        "pitch",
+                        {
+                            "reading": "たべる",
+                            "pitches": [
+                                {
+                                    "position": 2,
+                                    "nasal": [1],
+                                    "devoice": 3,
+                                    "tags": ["verb"],
+                                }
+                            ],
+                        },
+                    ],
+                    [
+                        "食べる",
+                        "ipa",
+                        {
+                            "reading": "たべる",
+                            "transcriptions": [{"ipa": "tabe\u027e\u026f", "tags": ["standard"]}],
+                        },
+                    ],
+                ]
+            },
+        )
+
+        result = import_dictionary(self.database_path, self.archive_path)
+
+        self.assertEqual(result.dictionary.term_count, 0)
+        self.assertEqual(result.dictionary.kanji_count, 0)
+        self.assertEqual(result.dictionary.metadata_count, 3)
+        self.assertEqual(result.dictionary.frequency_mode, "rank-based")
+        with closing(sqlite3.connect(self.database_path)) as connection:
+            modes = connection.execute("SELECT mode FROM term_metadata ORDER BY id").fetchall()
+        self.assertEqual(modes, [("freq",), ("pitch",), ("ipa",)])
+
+    def test_rejects_invalid_term_metadata_transactionally(self) -> None:
+        write_dictionary(
+            self.archive_path,
+            title="Invalid Metadata",
+            terms=[],
+            extra_files={
+                "term_meta_bank_1.json": [
+                    ["word", "pitch", {"reading": "word", "pitches": [{"position": -1}]}]
+                ]
+            },
+        )
+
+        with self.assertRaisesRegex(DictionaryImportError, "invalid pitch position"):
+            import_dictionary(self.database_path, self.archive_path)
+
+        self.assertEqual(DictionaryRepository(self.database_path).list_dictionaries(), [])
+
 
 def _remove_database(path: Path) -> None:
     for suffix in ("", "-wal", "-shm"):

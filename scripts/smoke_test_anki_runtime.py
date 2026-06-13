@@ -95,6 +95,10 @@ def main() -> int:
         raise RuntimeError("Settings dialog does not expose multiple themes")
     if settings.dictionary_layout.count() != 2:
         raise RuntimeError("Settings dialog does not expose both dictionary layouts")
+    if settings.frequency_sort_source.count() < 1:
+        raise RuntimeError("Settings dialog does not expose frequency source selection")
+    if settings.frequency_sort_order.count() != 3:
+        raise RuntimeError("Settings dialog does not expose frequency sort direction")
     if settings.font_size.minimum() != 10 or settings.font_size.maximum() != 32:
         raise RuntimeError("Settings dialog has invalid font size bounds")
     if settings.pin_shortcut.text() != "Ctrl+Shift+K":
@@ -115,6 +119,23 @@ def main() -> int:
         raise RuntimeError(f"Popup JavaScript was not injected: {web_content.js}")
     if not any(path.endswith("/web/popup.css") for path in web_content.css):
         raise RuntimeError(f"Popup CSS was not injected: {web_content.css}")
+    popup_script = (arguments.addons_directory / arguments.package / "web" / "popup.js").read_text(
+        encoding="utf-8"
+    )
+    if 'data-popup-action="pin"' not in popup_script:
+        raise RuntimeError("Popup does not expose the compact pin control")
+    if 'data-popup-action="close"' not in popup_script:
+        raise RuntimeError("Popup does not expose the compact close control")
+    if "createLexicalMetadata" not in popup_script:
+        raise RuntimeError("Popup does not expose frequency and pronunciation metadata")
+    popup_styles = (arguments.addons_directory / arguments.package / "web" / "popup.css").read_text(
+        encoding="utf-8"
+    )
+    header_style = popup_styles.split(".anki-lookup-popup .anki-lookup__header {", maxsplit=1)[
+        1
+    ].split("}", maxsplit=1)[0]
+    if "justify-content: flex-start;" not in header_style or "direction: ltr;" not in header_style:
+        raise RuntimeError("Popup header controls are not anchored to the physical left")
 
     bridge_message = 'anki_lookup:{"action":"lookup","request_id":1,"term":"runtime"}'
     handled, result = hooks.on_webview_did_receive_js_message(
@@ -143,10 +164,14 @@ def main() -> int:
                 "settings_dialog_constructed": True,
                 "appearance_controls": True,
                 "dictionary_layout_controls": True,
+                "frequency_sort_controls": True,
                 "pin_shortcut_config": True,
                 "smooth_scan_config": True,
                 "nested_popup_config": True,
                 "reviewer_assets_injected": True,
+                "popup_header_controls": True,
+                "popup_controls_left_aligned": True,
+                "lexical_metadata_rendering": True,
                 "lookup_bridge_handled": True,
             }
         )

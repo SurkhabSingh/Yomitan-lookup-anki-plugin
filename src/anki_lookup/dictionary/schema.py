@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 def initialize_database(connection: sqlite3.Connection) -> None:
@@ -28,6 +28,8 @@ def initialize_database(connection: sqlite3.Connection) -> None:
             priority INTEGER NOT NULL,
             term_count INTEGER NOT NULL DEFAULT 0,
             kanji_count INTEGER NOT NULL DEFAULT 0,
+            metadata_count INTEGER NOT NULL DEFAULT 0,
+            frequency_mode TEXT NOT NULL DEFAULT '',
             has_rule_metadata INTEGER NOT NULL DEFAULT 0
                 CHECK (has_rule_metadata IN (0, 1)),
             imported_at TEXT NOT NULL,
@@ -71,6 +73,17 @@ def initialize_database(connection: sqlite3.Connection) -> None:
             stats_json TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS term_metadata (
+            id INTEGER PRIMARY KEY,
+            dictionary_id INTEGER NOT NULL REFERENCES dictionaries(id) ON DELETE CASCADE,
+            expression TEXT NOT NULL,
+            reading TEXT NOT NULL,
+            normalized_expression TEXT NOT NULL,
+            normalized_reading TEXT NOT NULL,
+            mode TEXT NOT NULL CHECK (mode IN ('freq', 'pitch', 'ipa')),
+            data_json TEXT NOT NULL
+        );
+
         CREATE INDEX IF NOT EXISTS terms_expression_idx
             ON terms(normalized_expression, dictionary_id);
         CREATE INDEX IF NOT EXISTS terms_reading_idx
@@ -81,6 +94,12 @@ def initialize_database(connection: sqlite3.Connection) -> None:
             ON kanji(normalized_character, dictionary_id);
         CREATE INDEX IF NOT EXISTS kanji_dictionary_idx
             ON kanji(dictionary_id);
+        CREATE INDEX IF NOT EXISTS term_metadata_expression_idx
+            ON term_metadata(normalized_expression, dictionary_id);
+        CREATE INDEX IF NOT EXISTS term_metadata_reading_idx
+            ON term_metadata(normalized_expression, normalized_reading, dictionary_id);
+        CREATE INDEX IF NOT EXISTS term_metadata_dictionary_idx
+            ON term_metadata(dictionary_id);
 
         CREATE VIRTUAL TABLE IF NOT EXISTS term_definitions_fts USING fts5(
             definitions,
@@ -122,7 +141,7 @@ def initialize_database(connection: sqlite3.Connection) -> None:
             "INSERT INTO schema_meta(key, value) VALUES('schema_version', ?)",
             (str(SCHEMA_VERSION),),
         )
-    elif int(existing[0]) in {1, 2, 3, 4}:
+    elif int(existing[0]) in {1, 2, 3, 4, 5}:
         existing_version = int(existing[0])
         dictionary_columns = {
             row[1] for row in connection.execute("PRAGMA table_info(dictionaries)").fetchall()
@@ -138,6 +157,14 @@ def initialize_database(connection: sqlite3.Connection) -> None:
                 ADD COLUMN has_rule_metadata INTEGER NOT NULL DEFAULT 0
                 CHECK (has_rule_metadata IN (0, 1))
                 """
+            )
+        if "metadata_count" not in dictionary_columns:
+            connection.execute(
+                "ALTER TABLE dictionaries ADD COLUMN metadata_count INTEGER NOT NULL DEFAULT 0"
+            )
+        if "frequency_mode" not in dictionary_columns:
+            connection.execute(
+                "ALTER TABLE dictionaries ADD COLUMN frequency_mode TEXT NOT NULL DEFAULT ''"
             )
         term_columns = {row[1] for row in connection.execute("PRAGMA table_info(terms)").fetchall()}
         if "rules" not in term_columns:

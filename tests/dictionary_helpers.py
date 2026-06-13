@@ -11,6 +11,7 @@ def write_dictionary(
     title: str = "Synthetic Dictionary",
     revision: str = "1",
     terms: list[list[object]] | None = None,
+    index_extra: dict[str, object] | None = None,
     extra_files: dict[str, object] | None = None,
 ) -> None:
     rows = (
@@ -29,8 +30,11 @@ def write_dictionary(
         if terms is None
         else terms
     )
+    index: dict[str, object] = {"title": title, "revision": revision, "format": 3}
+    if index_extra:
+        index.update(index_extra)
     files: dict[str, object] = {
-        "index.json": {"title": title, "revision": revision, "format": 3},
+        "index.json": index,
         "term_bank_1.json": rows,
         "tag_bank_1.json": [["common", "frequency", 0, "Common term", 1]],
     }

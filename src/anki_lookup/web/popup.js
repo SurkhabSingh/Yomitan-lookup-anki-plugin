@@ -74,6 +74,7 @@
             lastResponse: null,
             anchorRect: null,
             manualPosition: null,
+            placement: "below",
             renderedSize: null,
             size:
                 depth === 0
@@ -89,8 +90,13 @@
         element.setAttribute("aria-live", "polite");
         element.setAttribute("aria-label", "Anki Lookup result");
         element.innerHTML = [
-            '<header class="anki-lookup__header" title="Drag after pinning">',
-            '<span class="anki-lookup__pin-indicator" aria-hidden="true"></span>',
+            '<header class="anki-lookup__header">',
+            '<button type="button" class="anki-lookup__header-control anki-lookup__pin" data-popup-action="pin" aria-label="Pin popup" aria-pressed="false">',
+            '<span class="anki-lookup__pin-icon" aria-hidden="true"></span>',
+            "</button>",
+            '<button type="button" class="anki-lookup__header-control anki-lookup__close" data-popup-action="close" aria-label="Close popup and child popups" title="Close popup and child popups">',
+            '<span class="anki-lookup__close-icon" aria-hidden="true"></span>',
+            "</button>",
             "</header>",
             '<div class="anki-lookup__body"></div>',
             '<div class="anki-lookup__resize" role="separator" aria-label="Resize popup" title="Drag to resize"></div>',
@@ -120,15 +126,21 @@
                 startY: event.clientY,
                 width: rect.width,
                 height: rect.height,
+                resizeFromTop: state.placement === "above" && !state.pinned,
             };
             handle.setPointerCapture(event.pointerId);
             state.element.classList.add("anki-lookup--resizing");
+            state.element.classList.toggle(
+                "anki-lookup--resize-from-top",
+                resizeState.resizeFromTop,
+            );
             event.preventDefault();
             event.stopPropagation();
             return;
         }
         const header = event.target.closest(".anki-lookup__header");
-        if (header && state.pinned && event.button === 0) {
+        const headerControl = event.target.closest(".anki-lookup__header-control");
+        if (header && !headerControl && state.pinned && event.button === 0) {
             const rect = state.element.getBoundingClientRect();
             dragState = {
                 state,
@@ -150,9 +162,12 @@
             return;
         }
         const { state } = resizeState;
+        const heightDelta = resizeState.resizeFromTop
+            ? resizeState.startY - event.clientY
+            : event.clientY - resizeState.startY;
         state.size = core.clampPopupSize(
             resizeState.width + event.clientX - resizeState.startX,
-            resizeState.height + event.clientY - resizeState.startY,
+            resizeState.height + heightDelta,
             window.innerWidth,
             window.innerHeight,
             12,
@@ -168,6 +183,7 @@
         const { state } = resizeState;
         resizeState = null;
         state.element.classList.remove("anki-lookup--resizing");
+        state.element.classList.remove("anki-lookup--resize-from-top");
         saveRootPopupSize(state);
     }
 
@@ -202,6 +218,15 @@
     }
 
     function onPopupClick(event, state) {
+        const action = event.target.closest("button[data-popup-action]");
+        if (action) {
+            if (action.dataset.popupAction === "pin") {
+                setPinned(state, !state.pinned);
+            } else if (action.dataset.popupAction === "close") {
+                closePopup(state);
+            }
+            return;
+        }
         const tab = event.target.closest("button[data-tab]");
         if (tab) {
             activateTab(state, tab.dataset.tab);
@@ -214,6 +239,7 @@
         if (value) {
             const rect = state.element.getBoundingClientRect();
             state.manualPosition = { left: rect.left, top: rect.top };
+            setPopupPlacement(state, "manual");
         } else {
             state.manualPosition = null;
             positionPopup(state, state.anchorRect);
@@ -223,9 +249,15 @@
             value ? "Pinned Anki Lookup result" : "Anki Lookup result",
         );
         state.element.classList.toggle("anki-lookup--pinned", value);
-        state.element.querySelector(".anki-lookup__header").title = value
-            ? "Pinned. Drag to move; use the pin shortcut to unpin."
-            : `Press ${pinShortcut} to pin this popup`;
+        updatePinControl(state);
+    }
+
+    function updatePinControl(state) {
+        const pin = state.element.querySelector(".anki-lookup__pin");
+        const action = state.pinned ? "Unpin" : "Pin";
+        pin.setAttribute("aria-label", `${action} popup`);
+        pin.setAttribute("aria-pressed", String(state.pinned));
+        pin.title = `${action} popup (${pinShortcut})`;
     }
 
     function containingText(node) {
@@ -643,6 +675,10 @@
                       : "Term";
             heading.appendChild(type);
             entryElement.appendChild(heading);
+            const lexicalMetadata = createLexicalMetadata(entry);
+            if (lexicalMetadata) {
+                entryElement.appendChild(lexicalMetadata);
+            }
             const tags = [...(entry.term_tags || []), ...(entry.definition_tags || [])];
             if (tags.length) {
                 const tagList = document.createElement("div");
@@ -703,6 +739,128 @@
             panel.appendChild(entryElement);
         }
         return panel;
+    }
+
+    function createLexicalMetadata(entry) {
+        const pronunciations = [
+            ...(entry.pitch_accents || []).map((item) =>
+                createPitchAccentItem(item, entry),
+            ),
+            ...(entry.ipa || []).map(createIpaItem),
+        ];
+        const frequencies = (entry.frequencies || []).map(createFrequencyItem);
+        if (!pronunciations.length && !frequencies.length) {
+            return null;
+        }
+
+        const container = document.createElement("div");
+        container.className = "anki-lookup__lexical-metadata";
+        if (pronunciations.length) {
+            container.appendChild(
+                createLexicalMetadataRow("Pronunciation", pronunciations),
+            );
+        }
+        if (frequencies.length) {
+            container.appendChild(
+                createLexicalMetadataRow("Frequency", frequencies),
+            );
+        }
+        return container;
+    }
+
+    function createLexicalMetadataRow(label, items) {
+        const row = document.createElement("div");
+        row.className = "anki-lookup__lexical-row";
+        row.setAttribute("aria-label", label);
+        for (const item of items) {
+            row.appendChild(item);
+        }
+        return row;
+    }
+
+    function createPitchAccentItem(item, entry) {
+        const element = createLexicalMetadataItem(
+            item.dictionary,
+            "anki-lookup__lexical-item--pitch",
+        );
+        const reading = item.reading || entry.reading || entry.expression;
+        const morae = core.japaneseMorae(reading);
+        const levels = core.pitchLevels(morae.length, item.position);
+        const nasal = new Set(item.nasal_positions || []);
+        const devoice = new Set(item.devoice_positions || []);
+        const contour = document.createElement("span");
+        contour.className = "anki-lookup__pitch";
+        contour.lang = "ja";
+        morae.forEach((mora, index) => {
+            const moraElement = document.createElement("span");
+            moraElement.className = "anki-lookup__pitch-mora";
+            moraElement.dataset.pitch = levels[index] ? "high" : "low";
+            if (levels[index] && !levels[index + 1]) {
+                moraElement.dataset.downstep = "true";
+            }
+            if (nasal.has(index + 1)) {
+                moraElement.dataset.nasal = "true";
+            }
+            if (devoice.has(index + 1)) {
+                moraElement.dataset.devoice = "true";
+            }
+            moraElement.textContent = mora;
+            contour.appendChild(moraElement);
+        });
+        const position = document.createElement("span");
+        position.className = "anki-lookup__pitch-position";
+        position.textContent = `[${item.position}]`;
+        element.append(contour, position);
+        element.title = [
+            `${item.dictionary}: ${reading}, pitch ${item.position}`,
+            ...(item.tags || []),
+        ].join(" · ");
+        return element;
+    }
+
+    function createIpaItem(item) {
+        const element = createLexicalMetadataItem(
+            item.dictionary,
+            "anki-lookup__lexical-item--ipa",
+        );
+        const transcription = document.createElement("span");
+        transcription.className = "anki-lookup__ipa";
+        transcription.textContent = `/${item.transcription}/`;
+        element.appendChild(transcription);
+        element.title = [
+            `${item.dictionary}: IPA ${item.transcription}`,
+            ...(item.tags || []),
+        ].join(" · ");
+        return element;
+    }
+
+    function createFrequencyItem(item) {
+        const element = createLexicalMetadataItem(
+            item.dictionary,
+            "anki-lookup__lexical-item--frequency",
+        );
+        const value = document.createElement("span");
+        value.className = "anki-lookup__frequency-value";
+        value.textContent = item.display_value;
+        element.appendChild(value);
+        const mode =
+            item.frequency_mode === "rank-based"
+                ? "rank; lower is more common"
+                : item.frequency_mode === "occurrence-based"
+                  ? "occurrence; higher is more common"
+                  : "frequency";
+        element.title = `${item.dictionary}: ${item.display_value} (${mode})`;
+        return element;
+    }
+
+    function createLexicalMetadataItem(dictionary, className) {
+        const element = document.createElement("span");
+        element.className = `anki-lookup__lexical-item ${className}`;
+        const source = document.createElement("span");
+        source.className = "anki-lookup__lexical-source";
+        source.textContent = dictionary;
+        element.appendChild(source);
+        return element;
     }
 
     function createContinuousDictionaryPanel(entries) {
@@ -857,16 +1015,11 @@
             window.innerHeight,
             margin,
         );
-        const availableBelow = state.anchorRect
-            ? window.innerHeight - margin - state.anchorRect.bottom - 10
-            : state.size.height;
-        const renderedSize = {
-            width: state.size.width,
-            height: Math.min(state.size.height, Math.max(120, availableBelow)),
-        };
-        state.renderedSize = renderedSize;
-        applyPopupSize(state, renderedSize);
         if (state.pinned && state.manualPosition) {
+            const renderedSize = { ...state.size };
+            state.renderedSize = renderedSize;
+            applyPopupSize(state, renderedSize);
+            setPopupPlacement(state, "manual");
             const manualPosition = core.clampDraggedPopupPosition(
                 state.manualPosition.left,
                 state.manualPosition.top,
@@ -887,18 +1040,27 @@
             ? core.nestedPopupPosition(
                   state.parent.element.getBoundingClientRect(),
                   state.anchorRect,
-                  renderedSize,
+                  state.size,
                   window.innerWidth,
+                  window.innerHeight,
                   margin,
                   10,
               )
             : core.popupPosition(
                   state.anchorRect,
-                  renderedSize,
+                  state.size,
                   window.innerWidth,
+                  window.innerHeight,
                   margin,
                   10,
               );
+        const renderedSize = {
+            width: state.size.width,
+            height: position.height,
+        };
+        state.renderedSize = renderedSize;
+        applyPopupSize(state, renderedSize);
+        setPopupPlacement(state, position.placement);
         const railPlacement = state.element.querySelector(".anki-lookup__tabs")
             ? core.sourceRailPlacement(
                   position.left,
@@ -926,6 +1088,14 @@
         state.element.style.top = `${position.top}px`;
     }
 
+    function setPopupPlacement(state, placement) {
+        state.placement = placement;
+        state.element.classList.toggle(
+            "anki-lookup--above",
+            placement === "above",
+        );
+    }
+
     function sourceRailSide(state) {
         if (state.element.classList.contains("anki-lookup--rail-left")) {
             return "left";
@@ -951,9 +1121,7 @@
             "--anki-lookup-font-size",
             `${appearance.font_size_px || 14}px`,
         );
-        state.element.querySelector(".anki-lookup__header").title = state.pinned
-            ? "Pinned. Drag to move; use the pin shortcut to unpin."
-            : `Press ${pinShortcut} to pin this popup`;
+        updatePinControl(state);
     }
 
     window.AnkiLookupApplyConfig = (nextConfig) => {
@@ -1005,14 +1173,9 @@
     }
 
     function closeDescendants(state) {
-        for (const popupState of [...popups]) {
-            let ancestor = popupState.parent;
-            while (ancestor) {
-                if (ancestor === state) {
-                    removePopup(popupState);
-                    break;
-                }
-                ancestor = ancestor.parent;
+        for (const popupState of [...popups].reverse()) {
+            if (core.isPopupDescendant(popupState, state)) {
+                removePopup(popupState);
             }
         }
     }
