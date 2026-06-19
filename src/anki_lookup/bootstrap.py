@@ -50,6 +50,9 @@ def _on_main_window_did_init() -> None:
     if mw is None:
         return
 
+    from .api_server import start_api_server
+
+    start_api_server()
     mw.addonManager.setWebExports(__name__, r"web/.*\.(css|js)")
 
     action = QAction(f"{ADDON_NAME}: About", mw)
