@@ -101,3 +101,9 @@ class LookupEntry:
     frequencies: tuple[FrequencyInfo, ...] = ()
     pitch_accents: tuple[PitchAccentInfo, ...] = ()
     ipa: tuple[IpaInfo, ...] = ()
+    #: Kanji readings, kept apart. ``reading`` joins them for display, which is right
+    #: for the popup but destroys the distinction a note field needs: a card wants
+    #: on'yomi and kun'yomi in separate fields, and they cannot be recovered from the
+    #: joined string.
+    onyomi: tuple[str, ...] = ()
+    kunyomi: tuple[str, ...] = ()

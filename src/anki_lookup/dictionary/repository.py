@@ -257,7 +257,9 @@ class DictionaryRepository:
             if row[9] not in direct_term_ids
         )
         for row in kanji_rows:
-            readings = " / ".join(value for value in (row[1], row[2]) if value)
+            readings = _joined_kanji_readings(row[1], row[2])
+            onyomi = _split_kanji_readings(row[1])
+            kunyomi = _split_kanji_readings(row[2])
             stats = json.loads(row[6])
             ranked_entries.append(
                 (
@@ -280,6 +282,8 @@ class DictionaryRepository:
                             for key, value in stats.items()
                             if isinstance(key, str)
                         ),
+                        onyomi=onyomi,
+                        kunyomi=kunyomi,
                     ),
                 )
             )
@@ -464,7 +468,9 @@ class DictionaryRepository:
                 )
             )
         for row in kanji_rows:
-            readings = " / ".join(value for value in (row[3], row[4]) if value)
+            readings = _joined_kanji_readings(row[3], row[4])
+            onyomi = _split_kanji_readings(row[3])
+            kunyomi = _split_kanji_readings(row[4])
             stats = json.loads(row[8])
             ranked_by_query[row[0]].append(
                 (
@@ -487,6 +493,8 @@ class DictionaryRepository:
                             for key, value in stats.items()
                             if isinstance(key, str)
                         ),
+                        onyomi=onyomi,
+                        kunyomi=kunyomi,
                     ),
                 )
             )
@@ -778,6 +786,21 @@ class DictionaryRepository:
         connection = sqlite3.connect(self.database_path, timeout=30)
         connection.execute("PRAGMA foreign_keys = ON")
         return connection
+
+
+def _split_kanji_readings(value: object) -> tuple[str, ...]:
+    """Split a kanji bank's space-separated readings into individual readings."""
+
+    if not isinstance(value, str):
+        return ()
+    return tuple(reading for reading in value.split() if reading)
+
+
+def _joined_kanji_readings(onyomi: object, kunyomi: object) -> str:
+    """Join on'yomi and kun'yomi for display in the popup's reading line."""
+
+    parts = [value for value in (onyomi, kunyomi) if isinstance(value, str) and value]
+    return " / ".join(parts)
 
 
 def _order_ranked_entries(

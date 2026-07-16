@@ -11,15 +11,14 @@ It is designed to provide:
   readings in bilingual dictionaries.
 - Japanese conjugation and common English inflection lookup, including forms such as
   `はがし` to `剥がす` and `running` to `run`.
-- Google Translate and DeepL translation actions.
+- Google Translate and DeepL translation of the captured sentence.
 - A configurable popup with themes, fonts, sizing, and layout controls.
-- Direct creation of new Anki notes from lookup results.
+- Direct creation of new Anki notes from lookup results, including the sentence the
+  word appeared in.
 
 > **Development status:** Pre-alpha. Hold-to-scan, local Yomitan term and kanji
-> dictionary imports, exact and reverse-definition results, and dictionary tabs are
-> available.
-> Translation provider connections and direct note creation are still being
-> implemented.
+> dictionary imports, exact and reverse-definition results, dictionary tabs,
+> sentence translation, and note creation are available.
 
 ## Current Preview
 
@@ -49,14 +48,58 @@ matching until a dedicated profile is available.
 Import one or more dictionaries from **Tools > Anki Lookup: Manage Dictionaries...**.
 The current version supports Yomitan format-3 term and kanji-only dictionaries. Use
 Ctrl or Shift selection in the manager to remove multiple dictionaries together.
-Results are shown in a separate tab for each dictionary. Google Translate and DeepL
-tabs are visible as placeholders, but do not send text or translate it yet. Pitch
-metadata-only archives are not searchable yet.
+Results are shown in a separate tab for each dictionary. Pitch metadata-only archives
+are not searchable yet.
+
+Move between source tabs with the arrow keys, or jump to the first and last with Home
+and End.
 
 Open **Tools > Anki Lookup: Settings...** to select a system, light, dark, or
 high-contrast theme, choose the popup font and font size, change the pin shortcut, or
 choose between dictionary buttons in Sources and continuous dictionary results.
 Appearance and layout changes apply immediately to the active reviewer.
+
+## Translation
+
+The translation tab translates the sentence captured around the scanned word, using
+Google Translate or DeepL. Choose the provider and the target language in
+**Tools > Anki Lookup: Settings...**.
+
+By default the tab opens the provider's website with the sentence prefilled. That
+needs nothing else installed and always works.
+
+For translations shown **inside** Anki, turn on *Translate inside Anki using the
+browser extension*. This requires the Wonder of U browser extension in App Support
+mode, which performs the translation and hands the result back over a local
+loopback connection.
+
+> **Anki and the Wonder of U desktop app cannot do this at the same time.** Both
+> listen on the same local port, the browser extension only ever contacts that one
+> port, and whichever program starts first gets it. This is why the setting is off by
+> default: turning it on while the desktop app is running changes nothing, and turning
+> it on before the desktop app starts means the desktop app loses its own translation.
+> **Tools > Anki Lookup: Diagnostics...** always reports which program currently holds
+> the port. Anki picks the port up on its own within a minute of the other program
+> quitting; no restart is needed.
+
+Successful translations are cached, so re-scanning the same sentence is instant and
+works even when the port is unavailable. The cache lifetime is configurable, and zero
+turns caching off.
+
+No translation is ever sent anywhere until you open a translation tab.
+
+## Creating Notes
+
+Configure a preset in **Tools > Anki Lookup: Note Preset...**: choose the deck and
+note type, then map each field to a lookup value. Field names such as `Front`,
+`Reading`, `Back`, and `Sentence` are matched to sensible defaults automatically.
+
+Press the **+** button on a lookup result to create the note. The captured sentence is
+available as a field source, so a saved word keeps the context it appeared in.
+
+Notes are created with Anki's normal undo support, so **Ctrl+Z** removes one. The card
+you are reviewing is never modified. If a note with the same key field already exists,
+Anki Lookup offers to open it instead of silently creating a duplicate.
 
 ## Installation
 

@@ -1,0 +1,107 @@
+{
+  "comment": "Shared contract for Japanese pitch. The popup renders pitch in JavaScript and note fields render it in Python; those are two implementations of one algorithm, and this fixture is the only thing holding them together. `morae` and `levels` exist on both sides and are asserted by BOTH tests/test_notes_markers.py and tests/js/scanner-core.test.js — a case added there must pass in both. `categories` is Python-only: the popup does not render categories, so there is no JavaScript counterpart to keep in step.",
+
+  "morae": [
+    {
+      "name": "plain kana are one mora each",
+      "reading": "たべる",
+      "expected": ["た", "べ", "る"]
+    },
+    {
+      "name": "small kana attach to the preceding mora",
+      "reading": "きょう",
+      "expected": ["きょ", "う"]
+    },
+    {
+      "name": "several small kana",
+      "reading": "しゃしんきょく",
+      "expected": ["しゃ", "し", "ん", "きょ", "く"]
+    },
+    {
+      "name": "katakana small kana behave the same",
+      "reading": "ジョギング",
+      "expected": ["ジョ", "ギ", "ン", "グ"]
+    },
+    {
+      "name": "a leading small kana has nothing to attach to",
+      "reading": "ゃあ",
+      "expected": ["ゃ", "あ"]
+    },
+    {
+      "name": "an empty reading has no morae",
+      "reading": "",
+      "expected": []
+    }
+  ],
+
+  "levels": [
+    {
+      "name": "heiban: low then high, staying high onto the particle",
+      "moraCount": 3,
+      "position": 0,
+      "expected": [false, true, true, true]
+    },
+    {
+      "name": "atamadaka: high first mora only",
+      "moraCount": 3,
+      "position": 1,
+      "expected": [true, false, false, false]
+    },
+    {
+      "name": "nakadaka: drops inside the word",
+      "moraCount": 4,
+      "position": 2,
+      "expected": [false, true, false, false, false]
+    },
+    {
+      "name": "odaka: high to the end, drops on the particle",
+      "moraCount": 3,
+      "position": 3,
+      "expected": [false, true, true, false]
+    },
+    {
+      "name": "an explicit HL pattern is used verbatim",
+      "moraCount": 3,
+      "position": "LHHH",
+      "expected": [false, true, true, true]
+    },
+    {
+      "name": "a short HL pattern repeats its last value",
+      "moraCount": 3,
+      "position": "LH",
+      "expected": [false, true, true, true]
+    },
+    {
+      "name": "a long HL pattern is truncated",
+      "moraCount": 1,
+      "position": "LHHHHH",
+      "expected": [false, true]
+    },
+    {
+      "name": "an unusable position is treated as heiban",
+      "moraCount": 2,
+      "position": -5,
+      "expected": [false, true, true]
+    },
+    {
+      "name": "a single mora word",
+      "moraCount": 1,
+      "position": 1,
+      "expected": [true, false]
+    },
+    {
+      "name": "no morae still reports the particle",
+      "moraCount": 0,
+      "position": 0,
+      "expected": [false]
+    }
+  ],
+
+  "categories": [
+    { "name": "heiban", "moraCount": 3, "position": 0, "expected": "heiban" },
+    { "name": "atamadaka", "moraCount": 3, "position": 1, "expected": "atamadaka" },
+    { "name": "nakadaka", "moraCount": 4, "position": 2, "expected": "nakadaka" },
+    { "name": "odaka is a drop on the particle, so position equals mora count", "moraCount": 3, "position": 3, "expected": "odaka" },
+    { "name": "an explicit pattern has no plain-downstep category", "moraCount": 3, "position": "LHHH", "expected": "" }
+  ]
+}

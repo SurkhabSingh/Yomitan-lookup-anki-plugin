@@ -112,6 +112,51 @@ class DictionaryImporterTests(unittest.TestCase):
         self.assertEqual(entries[0].definitions, ("character", "letter"))
         self.assertEqual(entries[0].metadata, (("grade", "1"),))
 
+    def test_kanji_readings_survive_separately_for_note_fields(self) -> None:
+        # `reading` joins on'yomi and kun'yomi for the popup's reading line, which
+        # destroys the distinction a note needs: a card wants them in separate fields
+        # and they cannot be recovered from the joined string. Both query paths must
+        # carry them through.
+        write_dictionary(
+            self.archive_path,
+            terms=[],
+            extra_files={
+                "term_bank_1.json": [],
+                "kanji_bank_1.json": [
+                    ["食", "ショク ジキ", "く.う た.べる", "jouyou", ["eat"], {"strokes": 9}]
+                ],
+            },
+        )
+        import_dictionary(self.database_path, self.archive_path)
+        repository = DictionaryRepository(self.database_path)
+
+        searched = repository.search("食")[0]
+        exact = repository.search_exact_many(("食",))["食"][0]
+
+        for entry in (searched, exact):
+            self.assertEqual(entry.onyomi, ("ショク", "ジキ"))
+            self.assertEqual(entry.kunyomi, ("く.う", "た.べる"))
+            # The joined form the popup shows is unchanged.
+            self.assertEqual(entry.reading, "ショク ジキ / く.う た.べる")
+            self.assertEqual(entry.metadata, (("strokes", "9"),))
+
+    def test_kanji_without_a_reading_class_reports_no_readings(self) -> None:
+        write_dictionary(
+            self.archive_path,
+            terms=[],
+            extra_files={
+                "term_bank_1.json": [],
+                "kanji_bank_1.json": [["々", "", "", "", ["repetition mark"], {}]],
+            },
+        )
+        import_dictionary(self.database_path, self.archive_path)
+
+        entry = DictionaryRepository(self.database_path).search("々")[0]
+
+        self.assertEqual(entry.onyomi, ())
+        self.assertEqual(entry.kunyomi, ())
+        self.assertEqual(entry.reading, "")
+
     def test_cancelled_import_rolls_back_partial_terms(self) -> None:
         rows = [
             [f"term-{index}", "", "", "", 0, [f"Definition {index}"], index, ""]

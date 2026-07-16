@@ -61,17 +61,20 @@
     text-underline-offset: 0.16em;
 }
 
+/* The header carries two small controls, not a title. A filled bar with a rule under
+   it announced itself as a titlebar and pushed the headword — the thing the popup
+   exists to show — into second place. Now the controls sit quietly above the content
+   and the headword opens the box. */
 .anki-lookup-popup .anki-lookup__header {
     display: flex;
     flex: none;
     align-items: center;
     justify-content: flex-start;
     gap: 2px;
-    min-height: 26px;
-    padding: 3px 5px;
+    min-height: 22px;
+    padding: 5px 5px 0;
     direction: ltr;
-    background: var(--anki-lookup-bg);
-    border-bottom: 1px solid var(--anki-lookup-border);
+    background: transparent;
     border-radius: 9px 9px 0 0;
 }
 
@@ -89,6 +92,16 @@
     justify-content: center;
     padding: 0;
     border-radius: 5px;
+    opacity: 0.55;
+    transition: opacity 120ms ease;
+}
+
+/* Present but recessive: reachable the moment you go looking, invisible while you
+   are reading. */
+.anki-lookup-popup:hover .anki-lookup__header-control,
+.anki-lookup-popup .anki-lookup__header-control:focus-visible,
+.anki-lookup-popup.anki-lookup--pinned .anki-lookup__pin {
+    opacity: 1;
 }
 
 .anki-lookup-popup .anki-lookup__pin-icon {
@@ -205,9 +218,12 @@
     overflow-x: hidden;
     overflow-y: auto;
     padding: 8px;
-    background: var(--anki-lookup-surface);
-    border: 1px solid
-        color-mix(in srgb, var(--anki-lookup-border) 72%, var(--anki-lookup-fg));
+    /* The same material as the popup: same fill, same border, same elevation, so the
+       rail reads as part of one object rather than a separate panel with its own
+       surface colour competing beside it. Transparent went too far — with nothing
+       behind them the sources were text floating on the card. */
+    background: var(--anki-lookup-bg);
+    border: 1px solid var(--anki-lookup-border);
     border-radius: 8px;
     box-shadow:
         0 10px 28px rgb(15 23 42 / 14%),
@@ -227,6 +243,13 @@
     left: 8px;
     width: 120px;
     max-height: calc(100% - 40px);
+    /* Sitting *over* the entry rather than beside it, so it takes the raised surface
+       colour instead of the popup's own: matching the background it overlaps would
+       leave nothing to tell the two apart. No shadow — it is inside the box that
+       already casts one. */
+    padding: 8px;
+    background: var(--anki-lookup-surface);
+    border: 1px solid var(--anki-lookup-border);
     box-shadow: none;
 }
 
@@ -243,15 +266,16 @@
     text-transform: uppercase;
 }
 
+/* Outlining every source made the rail a grid of buttons. Only the selected one
+   needs a shape; the rest are text until you point at them. */
 .anki-lookup-popup .anki-lookup__tabs button {
     position: relative;
     width: 100%;
     min-width: 0;
-    min-height: 30px;
+    min-height: 28px;
     overflow: hidden;
-    padding: 5px 8px;
-    border: 1px solid
-        color-mix(in srgb, var(--anki-lookup-border) 78%, var(--anki-lookup-fg));
+    padding: 5px 9px;
+    border: 1px solid transparent;
     border-radius: 6px;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -261,19 +285,9 @@
 
 .anki-lookup-popup .anki-lookup__tabs .anki-lookup__tab--active {
     color: var(--anki-lookup-accent);
-    background: var(--anki-lookup-bg);
-    border-color: color-mix(
-        in srgb,
-        var(--anki-lookup-accent) 45%,
-        var(--anki-lookup-border)
-    );
-    box-shadow: inset 3px 0 0 var(--anki-lookup-accent);
-}
-
-.anki-lookup-popup.anki-lookup--rail-right
-    .anki-lookup__tabs
-    .anki-lookup__tab--active {
-    box-shadow: inset -3px 0 0 var(--anki-lookup-accent);
+    background: var(--anki-lookup-accent-soft);
+    border-color: transparent;
+    font-weight: 600;
 }
 
 .anki-lookup-popup .anki-lookup__panels {
@@ -295,7 +309,7 @@
 
 .anki-lookup-popup .anki-lookup__entry {
     position: relative;
-    padding: 16px 18px 18px;
+    padding: 6px 20px 20px;
 }
 
 .anki-lookup-popup .anki-lookup__entry + .anki-lookup__entry {
@@ -385,9 +399,10 @@
 
 .anki-lookup-popup .anki-lookup__headword strong {
     overflow-wrap: anywhere;
-    font-size: 1.52em;
+    font-size: 1.85em;
     font-weight: 600;
-    line-height: 1.25;
+    letter-spacing: -0.01em;
+    line-height: 1.2;
 }
 
 .anki-lookup-popup .anki-lookup__reading {
@@ -528,6 +543,11 @@
     position: relative;
     padding-inline-start: 28px;
     overflow-wrap: anywhere;
+    /* Monolingual entries arrive as a headword line and then a numbered sense per
+       line. Without this, HTML collapses every one of those newlines to a space and a
+       whole entry runs together as a single paragraph. Safe to honour the text as
+       given: each line's own whitespace was already normalised on import. */
+    white-space: pre-wrap;
     counter-increment: anki-lookup-definition;
 }
 
@@ -608,6 +628,112 @@
     padding: 0;
 }
 
+.anki-lookup-popup .anki-lookup__provider .anki-lookup__loading {
+    padding: 0;
+}
+
+.anki-lookup-popup .anki-lookup__add-note {
+    flex: none;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    color: var(--anki-lookup-muted);
+    font: inherit;
+    font-size: 1.05em;
+    line-height: 1;
+    background: transparent;
+    border: 1px solid var(--anki-lookup-border);
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.anki-lookup-popup .anki-lookup__add-note:hover:not(:disabled) {
+    color: var(--anki-lookup-accent);
+    border-color: var(--anki-lookup-accent);
+}
+
+.anki-lookup-popup .anki-lookup__add-note:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+.anki-lookup-popup .anki-lookup__add-note:focus-visible {
+    outline: 2px solid var(--anki-lookup-accent);
+    outline-offset: 2px;
+}
+
+.anki-lookup-popup .anki-lookup__note-status {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 12px;
+    color: var(--anki-lookup-muted);
+    font-size: 0.82em;
+    background: var(--anki-lookup-surface);
+    border-block-end: 1px solid var(--anki-lookup-border);
+}
+
+.anki-lookup-popup .anki-lookup__note-status--error {
+    color: var(--anki-lookup-error);
+}
+
+.anki-lookup-popup .anki-lookup__note-action {
+    padding: 3px 9px;
+    color: inherit;
+    font: inherit;
+    font-size: 0.95em;
+    background: transparent;
+    border: 1px solid var(--anki-lookup-border);
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+.anki-lookup-popup .anki-lookup__note-action:hover {
+    border-color: var(--anki-lookup-accent);
+}
+
+.anki-lookup-popup .anki-lookup__translation-text {
+    margin: 0 0 10px;
+    padding: 10px 12px;
+    background: var(--anki-lookup-surface);
+    border-radius: 7px;
+    white-space: pre-wrap;
+}
+
+.anki-lookup-popup .anki-lookup__attribution {
+    margin: 0;
+    color: var(--anki-lookup-muted);
+    font-size: 0.78em;
+}
+
+.anki-lookup-popup .anki-lookup__translation-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 12px;
+}
+
+.anki-lookup-popup .anki-lookup__translation-action {
+    padding: 5px 11px;
+    color: inherit;
+    font: inherit;
+    font-size: 0.82em;
+    background: var(--anki-lookup-surface);
+    border: 1px solid var(--anki-lookup-border);
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.anki-lookup-popup .anki-lookup__translation-action:hover {
+    border-color: var(--anki-lookup-accent);
+}
+
+.anki-lookup-popup .anki-lookup__translation-action:focus-visible {
+    outline: 2px solid var(--anki-lookup-accent);
+    outline-offset: 2px;
+}
+
 .anki-lookup-popup .anki-lookup__status--error {
     color: var(--anki-lookup-error);
 }
@@ -631,43 +757,85 @@
 
 .anki-lookup-popup .anki-lookup__resize {
     position: absolute;
+    z-index: 3;
+    width: 16px;
+    height: 16px;
+    touch-action: none;
+}
+
+/* Only the corner facing the free space used to be reachable, because a single grip
+   moved between the bottom and the top depending on where the popup opened. Four
+   grips means the box can always be resized from whichever corner is convenient. */
+.anki-lookup-popup .anki-lookup__resize--top-left {
+    top: 0;
+    left: 0;
+    cursor: nw-resize;
+}
+
+.anki-lookup-popup .anki-lookup__resize--top-right {
+    top: 0;
+    right: 0;
+    cursor: ne-resize;
+}
+
+.anki-lookup-popup .anki-lookup__resize--bottom-left {
+    bottom: 0;
+    left: 0;
+    cursor: sw-resize;
+}
+
+.anki-lookup-popup .anki-lookup__resize--bottom-right {
     right: 0;
     bottom: 0;
-    z-index: 3;
-    width: 18px;
-    height: 18px;
     cursor: se-resize;
-    touch-action: none;
 }
 
 .anki-lookup-popup .anki-lookup__resize::before {
     position: absolute;
-    right: 3px;
-    bottom: 3px;
-    width: 8px;
-    height: 8px;
+    width: 7px;
+    height: 7px;
     content: "";
-    border-right: 2px solid var(--anki-lookup-muted);
-    border-bottom: 2px solid var(--anki-lookup-muted);
-    opacity: 0.5;
+    opacity: 0;
+    transition: opacity 120ms ease;
 }
 
-.anki-lookup-popup.anki-lookup--above:not(.anki-lookup--resizing)
-    .anki-lookup__resize,
-.anki-lookup-popup.anki-lookup--resize-from-top .anki-lookup__resize {
-    top: 0;
-    bottom: auto;
-    cursor: ne-resize;
+/* The bottom-right corner is the conventional one, so it is the only grip visible at
+   rest. The rest appear on hover: discoverable without three extra marks of chrome on
+   a box whose job is to show a definition. */
+.anki-lookup-popup .anki-lookup__resize--bottom-right::before {
+    opacity: 0.45;
 }
 
-.anki-lookup-popup.anki-lookup--above:not(.anki-lookup--resizing)
-    .anki-lookup__resize::before,
-.anki-lookup-popup.anki-lookup--resize-from-top .anki-lookup__resize::before {
+.anki-lookup-popup:hover .anki-lookup__resize::before {
+    opacity: 0.45;
+}
+
+.anki-lookup-popup .anki-lookup__resize--top-left::before {
     top: 3px;
-    bottom: auto;
+    left: 3px;
+    border-top: 2px solid var(--anki-lookup-muted);
+    border-left: 2px solid var(--anki-lookup-muted);
+}
+
+.anki-lookup-popup .anki-lookup__resize--top-right::before {
+    top: 3px;
+    right: 3px;
     border-top: 2px solid var(--anki-lookup-muted);
     border-right: 2px solid var(--anki-lookup-muted);
-    border-bottom: 0;
+}
+
+.anki-lookup-popup .anki-lookup__resize--bottom-left::before {
+    bottom: 3px;
+    left: 3px;
+    border-bottom: 2px solid var(--anki-lookup-muted);
+    border-left: 2px solid var(--anki-lookup-muted);
+}
+
+.anki-lookup-popup .anki-lookup__resize--bottom-right::before {
+    right: 3px;
+    bottom: 3px;
+    border-right: 2px solid var(--anki-lookup-muted);
+    border-bottom: 2px solid var(--anki-lookup-muted);
 }
 
 .anki-lookup-popup .anki-lookup__resize:hover::before,

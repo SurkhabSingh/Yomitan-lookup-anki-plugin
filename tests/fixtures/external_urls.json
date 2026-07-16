@@ -1,0 +1,53 @@
+{
+  "comment": "Shared contract for the no-key external translator URLs. Consumed by BOTH tests/test_translation_external.py and tests/js/scanner-core.test.js. The Python and JavaScript builders are separate implementations of the same rule; this fixture is the only thing stopping them from drifting apart.",
+  "cases": [
+    {
+      "name": "google ascii",
+      "provider": "google-translate",
+      "text": "Hello world",
+      "source": "auto",
+      "target": "es",
+      "expected": "https://translate.google.com/?sl=auto&tl=es&text=Hello+world&op=translate"
+    },
+    {
+      "name": "google japanese is percent encoded",
+      "provider": "google-translate",
+      "text": "日本語",
+      "source": "ja",
+      "target": "en",
+      "expected": "https://translate.google.com/?sl=ja&tl=en&text=%E6%97%A5%E6%9C%AC%E8%AA%9E&op=translate"
+    },
+    {
+      "name": "google escapes url metacharacters",
+      "provider": "google-translate",
+      "text": "a&b=c?d#e",
+      "source": "auto",
+      "target": "fr",
+      "expected": "https://translate.google.com/?sl=auto&tl=fr&text=a%26b%3Dc%3Fd%23e&op=translate"
+    },
+    {
+      "name": "deepl carries text in the fragment",
+      "provider": "deepl",
+      "text": "Hello world",
+      "source": "auto",
+      "target": "de",
+      "expected": "https://www.deepl.com/translator#auto/de/Hello%20world"
+    },
+    {
+      "name": "deepl japanese is percent encoded",
+      "provider": "deepl",
+      "text": "日本語",
+      "source": "ja",
+      "target": "en",
+      "expected": "https://www.deepl.com/translator#ja/en/%E6%97%A5%E6%9C%AC%E8%AA%9E"
+    },
+    {
+      "name": "deepl escapes the fragment separator",
+      "provider": "deepl",
+      "text": "a/b#c",
+      "source": "auto",
+      "target": "nb",
+      "expected": "https://www.deepl.com/translator#auto/nb/a%2Fb%23c"
+    }
+  ]
+}

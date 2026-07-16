@@ -19,5 +19,19 @@
     "popup_width_px": 360,
     "popup_max_height_px": 420,
     "dictionary_layout": "source_rail"
+  },
+  "notes": {
+    "deck_id": 0,
+    "notetype_id": 0,
+    "field_mapping": [],
+    "tags": ["anki-lookup"],
+    "duplicate_field": "",
+    "check_duplicates": true
+  },
+  "translation": {
+    "provider": "google-translate",
+    "target_language": "en",
+    "bridge_enabled": false,
+    "cache_ttl_hours": 168
   }
 }

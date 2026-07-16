@@ -5,6 +5,10 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from .notes.field_mapping import is_configured, normalize_mapping
+from .translation.languages import normalize_target_language, target_language_label
+from .translation.models import ALLOWED_PROVIDERS
+
 DEFAULT_CONFIG: dict[str, Any] = {
     "config_version": 1,
     "lookup": {
@@ -27,6 +31,29 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "popup_max_height_px": 420,
         "dictionary_layout": "source_rail",
     },
+    "notes": {
+        "deck_id": 0,
+        "notetype_id": 0,
+        # A LIST, not a dict keyed by field name. _merge_known below only merges keys
+        # already present here, and user-chosen field names cannot be predeclared — a
+        # dict-shaped mapping would be silently erased on every config read, and would
+        # present to the user as "my field mapping keeps resetting itself".
+        "field_mapping": [],
+        "tags": ["anki-lookup"],
+        "duplicate_field": "",
+        "check_duplicates": True,
+    },
+    "translation": {
+        "provider": "google-translate",
+        "target_language": "en",
+        # Off by default, and deliberately so. Turning this on binds port 8791, which
+        # the Wonder of U desktop app also wants: whoever binds first wins, and the
+        # browser extension has no way to be pointed at the loser. Defaulting to on
+        # would mean installing this add-on could silently break translation in the
+        # desktop app, with nothing but a log line to explain it.
+        "bridge_enabled": False,
+        "cache_ttl_hours": 168,
+    },
 }
 
 ALLOWED_MODIFIERS = {"Shift", "Control", "Alt", "Meta"}
@@ -34,6 +61,9 @@ ALLOWED_RELEASE_BEHAVIORS = {"close", "remain_open"}
 ALLOWED_FREQUENCY_SORT_ORDERS = {"auto", "ascending", "descending"}
 ALLOWED_THEMES = {"system", "light", "dark", "high_contrast"}
 ALLOWED_DICTIONARY_LAYOUTS = {"source_rail", "continuous"}
+
+#: Maximum cache lifetime, in hours (one year). Zero turns caching off.
+MAX_CACHE_TTL_HOURS = 8_760
 
 
 def runtime_config(raw_config: object) -> dict[str, Any]:
@@ -83,7 +113,72 @@ def runtime_config(raw_config: object) -> dict[str, Any]:
         appearance["popup_max_height_px"], 180, 800, 420
     )
 
+    _validate_translation(config["translation"])
+    _validate_notes(config["notes"])
+
     return config
+
+
+def _validate_notes(notes: dict[str, Any]) -> None:
+    """Clamp the note preset in place."""
+
+    defaults = DEFAULT_CONFIG["notes"]
+
+    notes["deck_id"] = _bounded_int(notes["deck_id"], 0, 2**63 - 1, 0)
+    notes["notetype_id"] = _bounded_int(notes["notetype_id"], 0, 2**63 - 1, 0)
+    notes["field_mapping"] = normalize_mapping(notes["field_mapping"])
+
+    if not isinstance(notes["duplicate_field"], str):
+        notes["duplicate_field"] = defaults["duplicate_field"]
+    notes["duplicate_field"] = notes["duplicate_field"][:200]
+
+    if not isinstance(notes["check_duplicates"], bool):
+        notes["check_duplicates"] = defaults["check_duplicates"]
+
+    tags = notes["tags"]
+    notes["tags"] = (
+        [tag.strip()[:100] for tag in tags if isinstance(tag, str) and tag.strip()][:20]
+        if isinstance(tags, list)
+        else list(defaults["tags"])
+    )
+
+    # Derived, not persisted: lets the popup enable or disable its Add button without
+    # knowing what makes a preset valid.
+    notes["configured"] = is_configured(notes)
+
+
+def _validate_translation(translation: dict[str, Any]) -> None:
+    """Clamp the translation settings in place.
+
+    The provider check is not cosmetic. The browser extension does **not** sanitize
+    the ``provider`` field of a job: an unknown non-empty string is not coerced to a
+    default, it fails the job outright with a confusing bridge error. This is the
+    clamp that guarantees only ids the extension accepts ever reach the wire.
+    """
+
+    defaults = DEFAULT_CONFIG["translation"]
+
+    if translation["provider"] not in ALLOWED_PROVIDERS:
+        translation["provider"] = defaults["provider"]
+
+    # Provider-aware, and re-checked in both directions rather than filtered: the two
+    # target lists are not supersets of one another. Norwegian is "no" for Google and
+    # "nb" for DeepL, so a code that is valid for one is rejected by the other.
+    translation["target_language"] = normalize_target_language(
+        translation["target_language"],
+        translation["provider"],
+    )
+
+    translation["cache_ttl_hours"] = _bounded_int(
+        translation["cache_ttl_hours"], 0, MAX_CACHE_TTL_HOURS, defaults["cache_ttl_hours"]
+    )
+
+    # Derived, not persisted: injected so the popup can name the target language
+    # without shipping the language tables into JavaScript.
+    translation["target_language_label"] = target_language_label(
+        translation["target_language"],
+        translation["provider"],
+    )
 
 
 def _merge_known(target: dict[str, Any], source: dict[object, object]) -> None:

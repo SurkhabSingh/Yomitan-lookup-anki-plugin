@@ -7,12 +7,17 @@ from typing import Any
 
 from ..config import DEFAULT_CONFIG, runtime_config, validated_shortcut
 from ..runtime import dictionary_service
+from ..translation.languages import target_languages_for
+from ..translation.models import ALLOWED_PROVIDERS, provider_label
 
 THEMES = (
     ("Follow Anki / system", "system"),
     ("Light", "light"),
     ("Dark", "dark"),
     ("High contrast", "high_contrast"),
+)
+TRANSLATION_PROVIDERS = tuple(
+    (provider_label(provider), provider) for provider in ALLOWED_PROVIDERS
 )
 DICTIONARY_LAYOUTS = (
     ("Dictionary buttons in Sources", "source_rail"),
@@ -31,12 +36,14 @@ class SettingsDialog:
     def __init__(self, parent: Any) -> None:
         from aqt import mw
         from aqt.qt import (
+            QCheckBox,
             QComboBox,
             QDialog,
             QDialogButtonBox,
             QFont,
             QFontComboBox,
             QFormLayout,
+            QGroupBox,
             QLabel,
             QLineEdit,
             QSpinBox,
@@ -139,6 +146,63 @@ class SettingsDialog:
         note.setWordWrap(True)
         layout.addWidget(note)
 
+        translation_group = QGroupBox("Translation")
+        translation_form = QFormLayout(translation_group)
+
+        self.translation_provider = QComboBox()
+        for label, value in TRANSLATION_PROVIDERS:
+            self.translation_provider.addItem(label, value)
+        provider_index = self.translation_provider.findData(config["translation"]["provider"])
+        self.translation_provider.setCurrentIndex(max(0, provider_index))
+        translation_form.addRow("Provider", self.translation_provider)
+
+        self.translation_target = QComboBox()
+        self._populate_target_languages(
+            config["translation"]["provider"],
+            config["translation"]["target_language"],
+        )
+        translation_form.addRow("Translate into", self.translation_target)
+
+        self.translation_warning = QLabel()
+        self.translation_warning.setWordWrap(True)
+        self.translation_warning.hide()
+        translation_form.addRow("", self.translation_warning)
+
+        self.translation_cache_ttl = QSpinBox()
+        self.translation_cache_ttl.setRange(0, 8_760)
+        self.translation_cache_ttl.setSuffix(" hours")
+        self.translation_cache_ttl.setSpecialValueText("Do not cache")
+        self.translation_cache_ttl.setValue(config["translation"]["cache_ttl_hours"])
+        self.translation_cache_ttl.setToolTip(
+            "How long a translation is reused before it is requested again. Set to zero "
+            "to turn caching off."
+        )
+        translation_form.addRow("Cache translations for", self.translation_cache_ttl)
+
+        self.bridge_enabled = QCheckBox("Translate inside Anki using the browser extension")
+        self.bridge_enabled.setChecked(config["translation"]["bridge_enabled"])
+        self.bridge_enabled.setToolTip(
+            "Requires the Wonder of U browser extension in App Support mode.\n"
+            "Anki and the Wonder of U desktop app cannot both do this at once: they "
+            "share one port, and whichever starts first gets it."
+        )
+        translation_form.addRow("", self.bridge_enabled)
+
+        bridge_note = QLabel(
+            "Leave this off unless you want to translate in Anki. It binds the same port "
+            "the Wonder of U desktop app uses, and only one of the two can hold it. "
+            "With it off, translation tabs open the provider's website instead."
+        )
+        bridge_note.setWordWrap(True)
+        translation_form.addRow("", bridge_note)
+
+        self.bridge_status = QLabel(self._bridge_status_text())
+        self.bridge_status.setWordWrap(True)
+        translation_form.addRow("Status", self.bridge_status)
+
+        layout.addWidget(translation_group)
+        self.translation_provider.currentIndexChanged.connect(self._on_provider_changed)
+
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
         )
@@ -165,6 +229,7 @@ class SettingsDialog:
         candidate = deepcopy(self._raw_config)
         lookup = candidate.setdefault("lookup", {})
         appearance = candidate.setdefault("appearance", {})
+        translation = candidate.setdefault("translation", {})
         lookup["pin_shortcut"] = normalized_shortcut
         lookup["frequency_sort_dictionary_id"] = int(self.frequency_sort_source.currentData())
         lookup["frequency_sort_order"] = self.frequency_sort_order.currentData()
@@ -172,6 +237,10 @@ class SettingsDialog:
         appearance["font_family"] = self.font_family.currentFont().family()
         appearance["font_size_px"] = self.font_size.value()
         appearance["dictionary_layout"] = self.dictionary_layout.currentData()
+        translation["provider"] = self.translation_provider.currentData()
+        translation["target_language"] = self.translation_target.currentData()
+        translation["cache_ttl_hours"] = self.translation_cache_ttl.value()
+        translation["bridge_enabled"] = self.bridge_enabled.isChecked()
 
         validated = runtime_config(candidate)
         if validated["lookup"]["pin_shortcut"] != normalized_shortcut:
@@ -184,9 +253,43 @@ class SettingsDialog:
             return
 
         self._addon_manager.writeConfig(self._package, candidate)
+        self._apply_bridge_setting(validated)
         self._apply_to_reviewer(validated)
         self.dialog.accept()
         tooltip("Anki Lookup settings saved.", parent=self.dialog)
+
+    def _apply_bridge_setting(self, config: dict[str, Any]) -> None:
+        """Start or stop the bridge to match the saved setting.
+
+        Failing here must not lose the user's other settings: they are already
+        written, and a busy port is not a reason to refuse a font change.
+        """
+
+        from aqt.utils import showWarning
+
+        from ..runtime import bridge_controller
+
+        try:
+            controller = bridge_controller()
+            controller.apply_enabled(config["translation"]["bridge_enabled"])
+        except Exception:
+            showWarning(
+                "Anki Lookup could not start the translation bridge. Your other "
+                "settings were saved. See Tools > Anki Lookup: Diagnostics.",
+                parent=self.dialog,
+            )
+            return
+
+        if not config["translation"]["bridge_enabled"]:
+            return
+
+        reason = controller.unavailable_reason()
+        if reason:
+            showWarning(
+                f"Translation in Anki is not available yet. {reason}\n\n"
+                "Translation tabs will open the provider's website until it is.",
+                parent=self.dialog,
+            )
 
     def _apply_to_reviewer(self, config: dict[str, Any]) -> None:
         import json
@@ -205,6 +308,48 @@ class SettingsDialog:
 
     def _update_frequency_order_state(self) -> None:
         self.frequency_sort_order.setEnabled(bool(self.frequency_sort_source.currentData()))
+
+    def _bridge_status_text(self) -> str:
+        from ..runtime import bridge_controller
+
+        try:
+            reason = bridge_controller().unavailable_reason()
+        except Exception:
+            return "Unavailable. See Tools > Anki Lookup: Diagnostics."
+        return reason or "Connected to the browser extension."
+
+    def _populate_target_languages(self, provider: str, selected: str) -> None:
+        self.translation_target.clear()
+        for code, label in target_languages_for(provider):
+            self.translation_target.addItem(label, code)
+        index = self.translation_target.findData(selected)
+        self.translation_target.setCurrentIndex(max(0, index))
+
+    def _on_provider_changed(self) -> None:
+        """Re-check the target language against the newly chosen provider.
+
+        The two providers' target lists are not supersets of one another, so a code
+        that was valid a moment ago may not be now. Reset it and say so, rather than
+        silently swapping the user's language or leaving a code that would fail later
+        at translate time with a confusing bridge error.
+        """
+
+        provider = self.translation_provider.currentData()
+        previous_code = self.translation_target.currentData()
+        previous_label = self.translation_target.currentText()
+
+        supported = {code for code, _ in target_languages_for(provider)}
+        if previous_code in supported:
+            self._populate_target_languages(provider, previous_code)
+            self.translation_warning.hide()
+            return
+
+        self._populate_target_languages(provider, DEFAULT_CONFIG["translation"]["target_language"])
+        self.translation_warning.setText(
+            f"{provider_label(provider)} cannot translate into {previous_label}. "
+            f"Target language switched to {self.translation_target.currentText()}."
+        )
+        self.translation_warning.show()
 
 
 def show_settings_dialog(parent: Any) -> None:

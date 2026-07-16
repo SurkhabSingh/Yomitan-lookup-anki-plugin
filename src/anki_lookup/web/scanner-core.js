@@ -236,12 +236,24 @@
         return false;
     }
 
+    /**
+     * Place a popup relative to the text it describes.
+     *
+     * `userSized` is the difference between "how tall does this fit?" and "how tall
+     * did the user make it?". By default the height is capped to the room beside the
+     * anchor, which is right for an automatic opening. Once the user has resized the
+     * box that cap becomes a bug: it silently overrode their drag, the box refused to
+     * grow, and pinning was the only way out. When they have sized it, the popup still
+     * follows the word and still prefers the side with room — but it keeps its height
+     * and will cover the word rather than shrink.
+     */
     function anchoredVerticalPosition(
         anchor,
         requestedHeight,
         viewportHeight,
         margin,
         gap,
+        userSized = false,
     ) {
         const viewportHeightAvailable = Math.max(0, viewportHeight - margin * 2);
         if (!anchor) {
@@ -269,15 +281,25 @@
             availableBelow >= requestedHeight || availableBelow >= availableAbove
                 ? "below"
                 : "above";
-        const availableHeight =
-            placement === "above" ? availableAbove : availableBelow;
-        const height = Math.min(requestedHeight, availableHeight);
 
-        return {
-            top: placement === "above" ? aboveBottom - height : belowTop,
-            height,
-            placement,
-        };
+        if (!userSized) {
+            const availableHeight =
+                placement === "above" ? availableAbove : availableBelow;
+            const height = Math.min(requestedHeight, availableHeight);
+            return {
+                top: placement === "above" ? aboveBottom - height : belowTop,
+                height,
+                placement,
+            };
+        }
+
+        const height = Math.min(requestedHeight, viewportHeightAvailable);
+        const preferredTop = placement === "above" ? aboveBottom - height : belowTop;
+        const top = Math.max(
+            margin,
+            Math.min(preferredTop, viewportHeight - margin - height),
+        );
+        return { top, height, placement };
     }
 
     function popupPosition(
@@ -287,6 +309,7 @@
         viewportHeight,
         margin,
         gap,
+        userSized = false,
     ) {
         const preferredLeft = anchor ? anchor.left : (viewportWidth - size.width) / 2;
         const vertical = anchoredVerticalPosition(
@@ -295,6 +318,7 @@
             viewportHeight,
             margin,
             gap,
+            userSized,
         );
         return {
             left: Math.max(
@@ -313,6 +337,7 @@
         viewportHeight,
         margin,
         gap,
+        userSized = false,
     ) {
         const right = parent.right + gap;
         const left = parent.left - size.width - gap;
@@ -328,6 +353,7 @@
             viewportHeight,
             margin,
             gap,
+            userSized,
         );
         return {
             left: Math.max(
@@ -410,16 +436,13 @@
         };
     }
 
-    function sentenceAt(text, offset, locale) {
-        if (!text || offset < 0 || offset > text.length) {
-            return "";
-        }
+    function sentenceRangeAt(text, offset, locale) {
         const segmenter = getSegmenter(locale, "sentence");
         if (segmenter) {
             for (const part of segmenter.segment(text)) {
                 const end = part.index + part.segment.length;
                 if (offset >= part.index && offset <= end) {
-                    return sanitizeSentence(part.segment);
+                    return { start: part.index, end };
                 }
             }
         }
@@ -436,26 +459,390 @@
         if (end < text.length) {
             end += 1;
         }
-        return sanitizeSentence(text.slice(start, end));
+        return { start, end };
+    }
+
+    function sentenceAt(text, offset, locale) {
+        if (!text || offset < 0 || offset > text.length) {
+            return "";
+        }
+        const range = sentenceRangeAt(text, offset, locale);
+        return sanitizeSentence(text.slice(range.start, range.end));
+    }
+
+    /**
+     * The sentence around the scan point, plus where the scanned word sits in it.
+     *
+     * The offset is found by locating `term` in the *sanitised* sentence rather than
+     * by carrying the original index through sanitisation. Sanitising trims, collapses
+     * whitespace and strips unbalanced braces, each of which shifts every index after
+     * it; replaying all that to keep an offset in step would be a second implementation
+     * of the same transforms, and would drift the moment either changed. Searching for
+     * the word cannot drift, because it reads the string we actually send.
+     *
+     * The original position still matters when a word appears more than once — 「パンを
+     * 食べる前にパンを見た」 — so it is used to pick between occurrences, not to index.
+     *
+     * Returns an offset in **UTF-16 code units**, which is what JavaScript counts;
+     * Python converts to codepoints before slicing.
+     */
+    function sentenceContextAt(text, offset, locale, term) {
+        const sentence = sentenceAt(text, offset, locale);
+        if (!sentence || !term) {
+            return { text: sentence, offset: 0, term: "" };
+        }
+
+        const range = sentenceRangeAt(text, offset, locale);
+        const hint = Math.max(0, offset - range.start);
+        const index = nearestIndexOf(sentence, term, hint);
+        if (index < 0) {
+            // The scanned form is not in the sentence we are about to send — the
+            // segmenter and the scanner disagreed about a boundary. Better an empty
+            // cloze body than one cut in the wrong place; {sentence} still works.
+            return { text: sentence, offset: 0, term: "" };
+        }
+        return { text: sentence, offset: index, term };
+    }
+
+    /** The occurrence of `needle` nearest `hint`, or -1. */
+    function nearestIndexOf(haystack, needle, hint) {
+        let best = -1;
+        let bestDistance = Infinity;
+        let index = haystack.indexOf(needle);
+        while (index !== -1) {
+            const distance = Math.abs(index - hint);
+            if (distance < bestDistance) {
+                best = index;
+                bestDistance = distance;
+            }
+            index = haystack.indexOf(needle, index + 1);
+        }
+        return best;
+    }
+
+    /* Translation ------------------------------------------------------------
+       The Python half of this lives in translation/external.py. Both are driven by
+       tests/fixtures/external_urls.json so they cannot drift apart. */
+
+    const GOOGLE_TRANSLATE = "google-translate";
+    const DEEPL = "deepl";
+    const MAX_EXTERNAL_TEXT_LENGTH = 1800;
+
+    const PROVIDER_LABELS = {
+        [GOOGLE_TRANSLATE]: "Google Translate",
+        [DEEPL]: "DeepL",
+    };
+
+    function providerLabel(provider) {
+        return PROVIDER_LABELS[provider] || provider;
+    }
+
+    function truncateForExternalUrl(text) {
+        return String(text || "").slice(0, MAX_EXTERNAL_TEXT_LENGTH);
+    }
+
+    /* Translation state ------------------------------------------------------
+       The reducer the popup renders from. Kept pure and here rather than in
+       popup.js so it can be tested: popup.js is DOM code with no test harness. */
+
+    const TRANSLATION_IDLE = "idle";
+    const TRANSLATION_PENDING = "pending";
+    const TRANSLATION_READY = "ready";
+    const TRANSLATION_UNAVAILABLE = "unavailable";
+    const TRANSLATION_ERROR = "error";
+
+    /**
+     * Decide what a translation panel should show.
+     *
+     * `result` is the payload from Python, or null when the tab has never been
+     * activated. Returns the state name, the text to show, and which actions the
+     * panel offers — the panel renders exactly this and decides nothing itself.
+     */
+    function translationState(result) {
+        if (!result) {
+            return { state: TRANSLATION_IDLE, message: "", text: "", actions: [] };
+        }
+
+        if (result.status === TRANSLATION_PENDING) {
+            return {
+                state: TRANSLATION_PENDING,
+                message: `Translating with ${providerLabel(result.provider)}...`,
+                text: "",
+                actions: ["cancel"],
+            };
+        }
+
+        if (result.status === TRANSLATION_READY) {
+            return {
+                state: TRANSLATION_READY,
+                message: "",
+                text: result.text || "",
+                cached: Boolean(result.cached),
+                actions: ["copy", "retry"],
+            };
+        }
+
+        if (result.status === TRANSLATION_UNAVAILABLE) {
+            return {
+                state: TRANSLATION_UNAVAILABLE,
+                message: result.message || "Translation is unavailable.",
+                text: "",
+                actions: result.external_url ? ["open_external"] : [],
+            };
+        }
+
+        return {
+            state: TRANSLATION_ERROR,
+            message: result.message || "The translation failed.",
+            text: "",
+            actions: result.external_url ? ["retry", "open_external"] : ["retry"],
+        };
+    }
+
+    /**
+     * Whether activating a tab should start a translation.
+     *
+     * Lazy on purpose. Hold-to-scan fires a lookup on every pointer move; if each
+     * one also queued a translation, a few seconds of scanning would fill a 64-deep
+     * queue against an extension that translates one job at a time.
+     */
+    function shouldRequestTranslation(tabState) {
+        if (!tabState || !tabState.sentence) {
+            return false;
+        }
+        if (tabState.requested) {
+            return false;
+        }
+        return true;
+    }
+
+    /** Whether a pushed result belongs to the popup and request that is showing. */
+    function isCurrentTranslation(payload, popupToken, requestId) {
+        if (!payload || payload.kind !== "translation") {
+            return false;
+        }
+        return payload.popup_token === popupToken && payload.request_id === requestId;
+    }
+
+    /* Resize -------------------------------------------------------------------
+       Four corner grips. Each grows along its own diagonal and keeps the opposite
+       corner still, which is what every resizable window does and what makes the
+       gesture predictable regardless of where the popup happens to sit.
+
+       Automatic placement decides where a popup OPENS — below the scanned word, or
+       above it when there is more room there. But once the user drags a grip, the
+       size they asked for wins: the popup is theirs, and it may cover the word if
+       that is what they wanted. Before this, an unpinned popup's height was silently
+       overridden by whatever space happened to be left beside the anchor, so the box
+       refused to grow and the only escape was to pin it. */
+
+    const RESIZE_CORNERS = ["top-left", "top-right", "bottom-left", "bottom-right"];
+
+    function isResizeCorner(corner) {
+        return RESIZE_CORNERS.indexOf(corner) !== -1;
+    }
+
+    /** The size a drag is asking for, before clamping. */
+    function resizeDelta(corner, startRect, dx, dy) {
+        const growsLeft = corner === "top-left" || corner === "bottom-left";
+        const growsUp = corner === "top-left" || corner === "top-right";
+        return {
+            width: startRect.width + (growsLeft ? -dx : dx),
+            height: startRect.height + (growsUp ? -dy : dy),
+        };
+    }
+
+    /**
+     * Where the box lands once its size is settled.
+     *
+     * Derived from the *opposite* edge rather than by accumulating the pointer delta,
+     * so a size that got clamped cannot drag the anchored corner out of place: the
+     * grip stops moving, the far corner stays exactly where it was.
+     */
+    function resizeGeometry(corner, startRect, size) {
+        const growsLeft = corner === "top-left" || corner === "bottom-left";
+        const growsUp = corner === "top-left" || corner === "top-right";
+        return {
+            left: growsLeft ? startRect.right - size.width : startRect.left,
+            top: growsUp ? startRect.bottom - size.height : startRect.top,
+            width: size.width,
+            height: size.height,
+        };
+    }
+
+    /* Source rail keyboard navigation ------------------------------------------
+       The rail is an ARIA tablist, and a tablist without arrow keys is not one: the
+       pattern requires Left/Right (or Up/Down for a vertical rail) to move between
+       tabs, Home/End to jump to the ends, and wrapping at both edges. */
+
+    const TAB_NAVIGATION_KEYS = new Set([
+        "ArrowRight",
+        "ArrowLeft",
+        "ArrowDown",
+        "ArrowUp",
+        "Home",
+        "End",
+    ]);
+
+    function isTabNavigationKey(key) {
+        return TAB_NAVIGATION_KEYS.has(key);
+    }
+
+    /**
+     * Return the tab index a navigation key should move to.
+     *
+     * Returns the current index unchanged for anything that is not a navigation key,
+     * so the caller can use the result to decide whether to preventDefault.
+     */
+    function nextTabIndex(current, count, key) {
+        if (count <= 0) {
+            return 0;
+        }
+        const index = Math.min(Math.max(current, 0), count - 1);
+
+        if (key === "Home") {
+            return 0;
+        }
+        if (key === "End") {
+            return count - 1;
+        }
+        if (key === "ArrowRight" || key === "ArrowDown") {
+            return (index + 1) % count;
+        }
+        if (key === "ArrowLeft" || key === "ArrowUp") {
+            return (index - 1 + count) % count;
+        }
+        return index;
+    }
+
+    /* Note creation ----------------------------------------------------------- */
+
+    /**
+     * Decide what the Add control should say and whether it is usable.
+     *
+     * `result` is the payload from Python, or null before anything was pressed.
+     * `configured` comes from the injected config, so an unconfigured preset disables
+     * the button up front rather than failing after the user commits to it mid-review.
+     */
+    function noteState(result, configured) {
+        if (!configured) {
+            return {
+                state: "not_configured",
+                label: "Add note",
+                message: "Configure a note preset in Anki Lookup: Settings.",
+                enabled: false,
+                actions: [],
+            };
+        }
+
+        if (!result) {
+            return { state: "idle", label: "Add note", message: "", enabled: true, actions: [] };
+        }
+
+        if (result.status === "queued") {
+            return { state: "queued", label: "Adding...", message: "", enabled: false, actions: [] };
+        }
+
+        if (result.status === "added") {
+            return {
+                state: "added",
+                label: "Added",
+                message: "Note added.",
+                enabled: false,
+                actions: ["open_note"],
+            };
+        }
+
+        if (result.status === "duplicate") {
+            return {
+                state: "duplicate",
+                label: "Add note",
+                message: result.message || "This note already exists.",
+                enabled: true,
+                actions: ["open_note", "add_anyway"],
+            };
+        }
+
+        if (result.status === "not_configured") {
+            return {
+                state: "not_configured",
+                label: "Add note",
+                message: result.message || "Configure a note preset first.",
+                enabled: false,
+                actions: [],
+            };
+        }
+
+        return {
+            state: "error",
+            label: "Add note",
+            message: result.message || "The note could not be created.",
+            enabled: true,
+            actions: [],
+        };
+    }
+
+    /** Whether a pushed note result belongs to the popup and request showing. */
+    function isCurrentNote(payload, popupToken, requestId) {
+        if (!payload || payload.kind !== "note") {
+            return false;
+        }
+        return payload.popup_token === popupToken && payload.request_id === requestId;
+    }
+
+    function externalTranslateUrl(provider, text, sourceLang, targetLang) {
+        const trimmed = truncateForExternalUrl(text);
+        const source = sourceLang || "auto";
+        const target = targetLang || "en";
+
+        if (provider === DEEPL) {
+            // DeepL carries the text in the fragment, not the query.
+            return (
+                "https://www.deepl.com/translator#" +
+                `${encodeURIComponent(source)}/${encodeURIComponent(target)}/` +
+                encodeURIComponent(trimmed)
+            );
+        }
+
+        const query = new URLSearchParams();
+        query.set("sl", source);
+        query.set("tl", target);
+        query.set("text", trimmed);
+        query.set("op", "translate");
+        return `https://translate.google.com/?${query.toString()}`;
     }
 
     return {
         clampPopupSize,
         clampDraggedPopupPosition,
         canOpenNestedPopup,
+        externalTranslateUrl,
+        isCurrentNote,
+        isCurrentTranslation,
         isPopupDescendant,
+        isResizeCorner,
+        isTabNavigationKey,
         japaneseMorae,
         japaneseCandidates,
         lookupCandidates,
         lookupDelay,
         matchesShortcut,
         nestedPopupPosition,
+        nextTabIndex,
         normalizeTerm,
+        noteState,
         pitchLevels,
         popupPosition,
+        providerLabel,
+        resizeDelta,
+        resizeGeometry,
         sanitizeSentence,
         segmentAt,
         sentenceAt,
+        sentenceContextAt,
+        shouldRequestTranslation,
         sourceRailPlacement,
+        translationState,
+        truncateForExternalUrl,
     };
 });

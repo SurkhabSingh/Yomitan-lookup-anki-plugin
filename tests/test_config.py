@@ -1,6 +1,23 @@
+import json
 import unittest
+from pathlib import Path
 
-from anki_lookup.config import runtime_config
+from anki_lookup.config import DEFAULT_CONFIG, runtime_config
+
+
+class DefaultConfigParityTests(unittest.TestCase):
+    def test_shipped_config_json_matches_default_config(self) -> None:
+        # config.json is what Anki shows the user; DEFAULT_CONFIG is what the add-on
+        # actually validates against. They are mirrored by hand, and _merge_known
+        # silently falls back to DEFAULT_CONFIG for anything missing, so drift would
+        # ship as a setting that appears editable but never takes effect.
+        shipped = json.loads(_config_json_path().read_text(encoding="utf-8"))
+
+        self.assertEqual(shipped, DEFAULT_CONFIG)
+
+
+def _config_json_path() -> Path:
+    return Path(__file__).parents[1] / "src" / "anki_lookup" / "config.json"
 
 
 class RuntimeConfigTests(unittest.TestCase):
@@ -50,6 +67,74 @@ class RuntimeConfigTests(unittest.TestCase):
 
         self.assertNotIn("unexpected", config)
         self.assertNotIn("unexpected", config["lookup"])
+
+    def test_translation_defaults_keep_the_bridge_off(self) -> None:
+        # Turning the bridge on binds a port the Wonder of U desktop app also wants.
+        # Installing this add-on must never take that port by surprise.
+        config = runtime_config({})
+
+        self.assertFalse(config["translation"]["bridge_enabled"])
+
+    def test_an_unknown_provider_falls_back_rather_than_reaching_the_extension(self) -> None:
+        # The extension does not sanitize job.provider: an unknown non-empty string
+        # fails the job instead of falling back. This clamp is what stops that.
+        config = runtime_config({"translation": {"provider": "deepl-api"}})
+
+        self.assertEqual(config["translation"]["provider"], "google-translate")
+
+    def test_both_extension_provider_ids_are_accepted(self) -> None:
+        for provider in ("google-translate", "deepl"):
+            with self.subTest(provider=provider):
+                config = runtime_config({"translation": {"provider": provider}})
+
+                self.assertEqual(config["translation"]["provider"], provider)
+
+    def test_a_target_language_the_provider_rejects_falls_back_to_english(self) -> None:
+        # Norwegian is "no" for Google but "nb" for DeepL, which rejects "NO".
+        google = runtime_config(
+            {"translation": {"provider": "google-translate", "target_language": "no"}}
+        )
+        deepl = runtime_config({"translation": {"provider": "deepl", "target_language": "no"}})
+
+        self.assertEqual(google["translation"]["target_language"], "no")
+        self.assertEqual(deepl["translation"]["target_language"], "en")
+
+    def test_the_target_language_label_is_injected_for_javascript(self) -> None:
+        config = runtime_config({"translation": {"provider": "deepl", "target_language": "nb"}})
+
+        self.assertEqual(config["translation"]["target_language_label"], "Norwegian Bokmal")
+
+    def test_the_cache_lifetime_is_bounded(self) -> None:
+        self.assertEqual(
+            runtime_config({"translation": {"cache_ttl_hours": 10_000_000}})["translation"][
+                "cache_ttl_hours"
+            ],
+            8_760,
+        )
+        self.assertEqual(
+            runtime_config({"translation": {"cache_ttl_hours": -5}})["translation"][
+                "cache_ttl_hours"
+            ],
+            0,
+        )
+        self.assertEqual(
+            runtime_config({"translation": {"cache_ttl_hours": "forever"}})["translation"][
+                "cache_ttl_hours"
+            ],
+            168,
+        )
+
+    def test_a_non_boolean_bridge_flag_does_not_enable_the_bridge(self) -> None:
+        for value in ("true", 1, "yes"):
+            with self.subTest(value=value):
+                config = runtime_config({"translation": {"bridge_enabled": value}})
+
+                self.assertFalse(config["translation"]["bridge_enabled"])
+
+    def test_the_bridge_can_be_turned_on(self) -> None:
+        config = runtime_config({"translation": {"bridge_enabled": True}})
+
+        self.assertTrue(config["translation"]["bridge_enabled"])
 
     def test_normalizes_valid_shortcuts(self) -> None:
         config = runtime_config(

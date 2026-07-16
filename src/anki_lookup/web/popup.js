@@ -5,6 +5,27 @@
     const initialConfig = window.AnkiLookupConfig || {};
     const lookupConfig = initialConfig.lookup || {};
     let appearance = initialConfig.appearance || {};
+    let translationSettings = normalizeTranslationSettings(initialConfig.translation);
+    let notesSettings = normalizeNotesSettings(initialConfig.notes);
+
+    function normalizeNotesSettings(settings) {
+        const source = settings || {};
+        return {
+            // Derived by config.py: the popup does not need to know what makes a
+            // preset valid, only whether this one is.
+            configured: source.configured === true,
+        };
+    }
+
+    function normalizeTranslationSettings(settings) {
+        const source = settings || {};
+        return {
+            provider: source.provider || "google-translate",
+            target_language: source.target_language || "en",
+            // Injected by config.py so the popup never needs the language tables.
+            target_language_label: source.target_language_label || "English",
+        };
+    }
     const modifier = lookupConfig.modifier || "Shift";
     const releaseBehavior = lookupConfig.release_behavior || "remain_open";
     const debounceMs = Number.isFinite(lookupConfig.debounce_ms)
@@ -20,6 +41,12 @@
     const popupByElement = new WeakMap();
     const popups = [];
     const lookupCache = new Map();
+    let popupTokenSequence = 0;
+
+    function nextPopupToken() {
+        popupTokenSequence += 1;
+        return `popup-${popupTokenSequence}`;
+    }
 
     let modifierHeld = false;
     let requestSequence = 0;
@@ -67,13 +94,22 @@
             element,
             depth,
             parent,
+            // Identifies this popup for results that arrive after it was created.
+            // Depth is not usable for this: nested popups reuse it, and by the time a
+            // translation lands the popup that asked may be gone or replaced.
+            token: nextPopupToken(),
             pinned: false,
             lastTerm: "",
             latestRequest: 0,
             hasResult: false,
             lastResponse: null,
+            activeTabId: "",
+            translation: null,
             anchorRect: null,
             manualPosition: null,
+            // Set once the user drags a grip. From then on their size wins over
+            // automatic placement, until the popup is reused for a different word.
+            userSized: false,
             placement: "below",
             renderedSize: null,
             size:
@@ -99,7 +135,13 @@
             "</button>",
             "</header>",
             '<div class="anki-lookup__body"></div>',
-            '<div class="anki-lookup__resize" role="separator" aria-label="Resize popup" title="Drag to resize"></div>',
+            // One grip per corner. A single grip that relocated depending on placement
+            // meant the popup could only be resized from whichever corner happened to
+            // face the free space.
+            '<div class="anki-lookup__resize anki-lookup__resize--top-left" data-resize-corner="top-left" role="separator" aria-label="Resize popup" title="Drag to resize"></div>',
+            '<div class="anki-lookup__resize anki-lookup__resize--top-right" data-resize-corner="top-right" role="separator" aria-label="Resize popup" title="Drag to resize"></div>',
+            '<div class="anki-lookup__resize anki-lookup__resize--bottom-left" data-resize-corner="bottom-left" role="separator" aria-label="Resize popup" title="Drag to resize"></div>',
+            '<div class="anki-lookup__resize anki-lookup__resize--bottom-right" data-resize-corner="bottom-right" role="separator" aria-label="Resize popup" title="Drag to resize"></div>',
         ].join("");
         element.addEventListener("pointerdown", (event) => onPopupPointerDown(event, state));
         element.addEventListener("click", (event) => onPopupClick(event, state));
@@ -118,22 +160,35 @@
         }
         const handle = event.target.closest(".anki-lookup__resize");
         if (handle && event.button === 0) {
+            const corner = handle.dataset.resizeCorner;
+            if (!core.isResizeCorner(corner)) {
+                return;
+            }
             const rect = state.element.getBoundingClientRect();
             resizeState = {
                 state,
+                corner,
                 pointerId: event.pointerId,
                 startX: event.clientX,
                 startY: event.clientY,
-                width: rect.width,
-                height: rect.height,
-                resizeFromTop: state.placement === "above" && !state.pinned,
+                rect: {
+                    left: rect.left,
+                    top: rect.top,
+                    right: rect.right,
+                    bottom: rect.bottom,
+                    width: rect.width,
+                    height: rect.height,
+                },
             };
+            // Touching a grip hands the popup to the user. From here its size and
+            // position are theirs: automatic placement chose where it opened, and
+            // that job is done. Reusing the manual branch of positionPopup means no
+            // anchor clamp can shrink what they drag, and the box cannot flip sides
+            // mid-gesture.
+            state.userSized = true;
+            state.manualPosition = { left: rect.left, top: rect.top };
             handle.setPointerCapture(event.pointerId);
             state.element.classList.add("anki-lookup--resizing");
-            state.element.classList.toggle(
-                "anki-lookup--resize-from-top",
-                resizeState.resizeFromTop,
-            );
             event.preventDefault();
             event.stopPropagation();
             return;
@@ -161,17 +216,22 @@
         if (!resizeState || event.pointerId !== resizeState.pointerId) {
             return;
         }
-        const { state } = resizeState;
-        const heightDelta = resizeState.resizeFromTop
-            ? resizeState.startY - event.clientY
-            : event.clientY - resizeState.startY;
+        const { state, corner, rect } = resizeState;
+        const requested = core.resizeDelta(
+            corner,
+            rect,
+            event.clientX - resizeState.startX,
+            event.clientY - resizeState.startY,
+        );
         state.size = core.clampPopupSize(
-            resizeState.width + event.clientX - resizeState.startX,
-            resizeState.height + heightDelta,
+            requested.width,
+            requested.height,
             window.innerWidth,
             window.innerHeight,
             12,
         );
+        const geometry = core.resizeGeometry(corner, rect, state.size);
+        state.manualPosition = { left: geometry.left, top: geometry.top };
         applyPopupSize(state);
         positionPopup(state, state.anchorRect);
     }
@@ -183,7 +243,12 @@
         const { state } = resizeState;
         resizeState = null;
         state.element.classList.remove("anki-lookup--resizing");
-        state.element.classList.remove("anki-lookup--resize-from-top");
+        if (!state.pinned) {
+            // Free positioning was for the gesture. Drop it so the next scan anchors
+            // the popup to the new word again — still at the size the user chose,
+            // because userSized stays set.
+            state.manualPosition = null;
+        }
         saveRootPopupSize(state);
     }
 
@@ -231,6 +296,43 @@
         if (tab) {
             activateTab(state, tab.dataset.tab);
             return;
+        }
+        const translationAction = event.target.closest("button[data-translation-action]");
+        if (translationAction) {
+            onTranslationAction(state, translationAction.dataset.translationAction);
+            return;
+        }
+        const addNote = event.target.closest("button[data-add-note]");
+        if (addNote && addNote.__ankiLookupEntry) {
+            requestAddNote(state, addNote.__ankiLookupEntry);
+            return;
+        }
+        const noteAction = event.target.closest("button[data-note-action]");
+        if (noteAction) {
+            onNoteAction(state, noteAction.dataset.noteAction);
+            return;
+        }
+    }
+
+    function onTranslationAction(state, action) {
+        if (action === "cancel") {
+            cancelTranslation(state);
+        } else if (action === "retry") {
+            requestTranslation(state, state.translationSentence, { force: true });
+        } else if (action === "copy") {
+            copyTranslation(state);
+        } else if (action === "open_external") {
+            openExternalTranslation(state);
+        }
+    }
+
+    function copyTranslation(state) {
+        const text = state.translation && state.translation.text;
+        if (!text) {
+            return;
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).catch(() => {});
         }
     }
 
@@ -439,10 +541,11 @@
             rangeNode: caret.node,
             rangeStart: segment.start,
             source: popupByElement.get(popupElementFor(target)) || null,
-            sentence: core.sentenceAt(
+            sentenceContext: core.sentenceContextAt(
                 context.text,
                 contextStart,
                 document.documentElement.lang,
+                segment.term,
             ),
         };
     }
@@ -477,7 +580,12 @@
             term,
             rect: range.getBoundingClientRect(),
             source: null,
-            sentence: core.sentenceAt(context, offset, document.documentElement.lang),
+            sentenceContext: core.sentenceContextAt(
+                context,
+                offset,
+                document.documentElement.lang,
+                term,
+            ),
         };
     }
 
@@ -541,7 +649,7 @@
                 targetState,
                 candidate.term,
                 candidate.rect,
-                candidate.sentence,
+                candidate.sentenceContext,
                 candidate.candidates,
                 candidate.rangeNode,
                 candidate.rangeStart,
@@ -571,11 +679,17 @@
         state,
         term,
         rect,
-        sentence,
+        sentenceContext,
         candidates = [],
         rangeNode = null,
         rangeStart = 0,
     ) {
+        const context = sentenceContext || { text: "", offset: 0, term: "" };
+        const sentence = context.text || "";
+        // Belongs to this scan, not to the cached dictionary result: the same word
+        // in a different sentence must not inherit the cloze of the one before it.
+        state.sentenceContext = context;
+
         const cacheKey = candidates.length ? candidates.join("\u0000") : term;
         state.lastTerm = cacheKey;
         const cached = lookupCache.get(cacheKey);
@@ -591,7 +705,7 @@
             action: "lookup",
             request_id: requestId,
             term,
-            sentence: sentence || "",
+            sentence,
             candidates,
         })}`;
         pycmd(message, (response) => {
@@ -646,6 +760,113 @@
         state.element.classList.add("anki-lookup--visible");
     }
 
+    /* Note creation ----------------------------------------------------------- */
+
+    function createAddNoteControl(entry) {
+        const model = core.noteState(null, notesSettings.configured);
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "anki-lookup__add-note";
+        button.dataset.addNote = "";
+        button.textContent = "+";
+        button.setAttribute("aria-label", model.label);
+        button.title = model.enabled ? "Add a note from this result" : model.message;
+        button.disabled = !model.enabled;
+        // The entry is carried on the element so the click handler sends exactly what
+        // the user is looking at, rather than re-deriving it from a lookup that may
+        // have moved on.
+        button.__ankiLookupEntry = entry;
+        return button;
+    }
+
+    function requestAddNote(state, entry, { allowDuplicate = false } = {}) {
+        const requestId = ++requestSequence;
+        state.noteRequest = requestId;
+        state.noteEntry = entry;
+        state.note = { status: "queued" };
+        renderNoteStatus(state);
+
+        const message = `anki_lookup:${JSON.stringify({
+            action: "add_note",
+            request_id: requestId,
+            popup_token: state.token,
+            expression: entry.expression || "",
+            reading: entry.reading || "",
+            definition: (entry.definitions || []).join("; "),
+            // The sentence the scanner captured around the word. Without it a saved
+            // card is a word with no context to recall it from.
+            sentence: state.translationSentence || "",
+            // Where the scanned word sits in that sentence, and the form it actually
+            // took. Cloze quotes the sentence, and the sentence said 食べました even
+            // though the dictionary matched the headword 食べる.
+            sentence_offset: (state.sentenceContext && state.sentenceContext.offset) || 0,
+            source_term: (state.sentenceContext && state.sentenceContext.term) || "",
+            translation: (state.translation && state.translation.text) || "",
+            selected_text: entry.expression || "",
+            dictionary: entry.dictionary || "",
+            allow_duplicate: allowDuplicate,
+        })}`;
+        pycmd(message, (response) => {
+            if (
+                !response ||
+                !state.element.isConnected ||
+                response.request_id !== state.noteRequest
+            ) {
+                return;
+            }
+            state.note = response;
+            renderNoteStatus(state);
+        });
+    }
+
+    function renderNoteStatus(state) {
+        const model = core.noteState(state.note, notesSettings.configured);
+        let banner = state.element.querySelector(".anki-lookup__note-status");
+
+        if (!model.message) {
+            if (banner) {
+                banner.remove();
+            }
+            return;
+        }
+
+        if (!banner) {
+            banner = document.createElement("div");
+            banner.className = "anki-lookup__note-status";
+            const body = state.element.querySelector(".anki-lookup__body");
+            state.element.insertBefore(banner, body);
+        }
+
+        banner.replaceChildren();
+        banner.classList.toggle("anki-lookup__note-status--error", model.state === "error");
+
+        const text = document.createElement("span");
+        text.textContent = model.message;
+        banner.appendChild(text);
+
+        for (const action of model.actions) {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "anki-lookup__note-action";
+            button.dataset.noteAction = action;
+            button.textContent = action === "open_note" ? "Open note" : "Add anyway";
+            banner.appendChild(button);
+        }
+    }
+
+    function onNoteAction(state, action) {
+        if (action === "open_note") {
+            const noteId = state.note && state.note.note_id;
+            if (noteId) {
+                pycmd(
+                    `anki_lookup:${JSON.stringify({ action: "open_note", note_id: noteId })}`,
+                );
+            }
+        } else if (action === "add_anyway" && state.noteEntry) {
+            requestAddNote(state, state.noteEntry, { allowDuplicate: true });
+        }
+    }
+
     function createDictionaryPanel(entries) {
         const panel = document.createElement("div");
         for (const entry of entries) {
@@ -674,6 +895,10 @@
                       ? "Reverse"
                       : "Term";
             heading.appendChild(type);
+            const addControl = createAddNoteControl(entry);
+            if (addControl) {
+                heading.appendChild(addControl);
+            }
             entryElement.appendChild(heading);
             const lexicalMetadata = createLexicalMetadata(entry);
             if (lexicalMetadata) {
@@ -892,23 +1117,199 @@
         return panel;
     }
 
-    function createProviderPanel(provider, sentence) {
+    function createTranslationPanel(state, sentence) {
         const panel = document.createElement("div");
         panel.className = "anki-lookup__provider";
+
         const heading = document.createElement("h2");
-        heading.textContent = `${provider} translation`;
+        heading.textContent = `${core.providerLabel(translationSettings.provider)} translation`;
+
         const contextLabel = document.createElement("div");
         contextLabel.className = "anki-lookup__section-label";
         contextLabel.textContent = "Captured sentence";
+
         const context = document.createElement("p");
         context.className = "anki-lookup__sentence";
         context.textContent = sentence || "No surrounding sentence was detected.";
-        const status = document.createElement("p");
-        status.className = "anki-lookup__status";
-        status.textContent = `${provider} integration is not enabled yet.`;
-        panel.append(heading, contextLabel, context, status);
+
+        const body = document.createElement("div");
+        body.className = "anki-lookup__translation-body";
+
+        panel.append(heading, contextLabel, context, body);
+        renderTranslationState(state, body);
         return panel;
     }
+
+    function renderTranslationState(state, body) {
+        const model = core.translationState(state.translation);
+        body.replaceChildren();
+
+        if (model.state === "idle") {
+            return;
+        }
+
+        if (model.state === "pending") {
+            const loading = document.createElement("div");
+            loading.className = "anki-lookup__loading";
+            const spinner = document.createElement("span");
+            spinner.className = "anki-lookup__spinner";
+            spinner.setAttribute("aria-hidden", "true");
+            const label = document.createElement("span");
+            label.textContent = model.message;
+            loading.append(spinner, label);
+            body.appendChild(loading);
+        } else if (model.state === "ready") {
+            const label = document.createElement("div");
+            label.className = "anki-lookup__section-label";
+            label.textContent = `Translation into ${translationSettings.target_language_label}`;
+            const text = document.createElement("p");
+            text.className = "anki-lookup__translation-text";
+            text.textContent = model.text;
+            body.append(label, text);
+
+            const attribution = document.createElement("p");
+            attribution.className = "anki-lookup__attribution";
+            attribution.textContent = model.cached
+                ? `via ${core.providerLabel(state.translation.provider)} (cached)`
+                : `via ${core.providerLabel(state.translation.provider)}`;
+            body.appendChild(attribution);
+        } else {
+            const status = document.createElement("p");
+            status.className = "anki-lookup__status";
+            status.textContent = model.message;
+            body.appendChild(status);
+        }
+
+        const actions = createTranslationActions(model.actions);
+        if (actions) {
+            body.appendChild(actions);
+        }
+    }
+
+    const TRANSLATION_ACTION_LABELS = {
+        cancel: "Cancel",
+        copy: "Copy",
+        retry: "Retry",
+        open_external: "Open in browser",
+    };
+
+    function createTranslationActions(names) {
+        if (!names || !names.length) {
+            return null;
+        }
+        const row = document.createElement("div");
+        row.className = "anki-lookup__translation-actions";
+        for (const name of names) {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "anki-lookup__translation-action";
+            button.dataset.translationAction = name;
+            button.textContent =
+                name === "open_external"
+                    ? `Open in ${core.providerLabel(translationSettings.provider)}`
+                    : TRANSLATION_ACTION_LABELS[name];
+            row.appendChild(button);
+        }
+        return row;
+    }
+
+    function requestTranslation(state, sentence, { force = false } = {}) {
+        if (!sentence) {
+            return;
+        }
+        const requestId = ++requestSequence;
+        state.translationRequest = requestId;
+        state.translationSentence = sentence;
+        state.translation = { status: "pending", provider: translationSettings.provider };
+        refreshTranslationPanel(state);
+
+        const message = `anki_lookup:${JSON.stringify({
+            action: "translate",
+            request_id: requestId,
+            popup_token: state.token,
+            text: sentence,
+        })}`;
+        pycmd(message, (response) => {
+            // Guard one: the popup went away. Guard two: a newer request replaced
+            // this one. A pending answer is only a promise; the real result arrives
+            // through AnkiLookupPushResult later.
+            if (
+                !response ||
+                !state.element.isConnected ||
+                response.request_id !== state.translationRequest
+            ) {
+                return;
+            }
+            state.translation = response;
+            refreshTranslationPanel(state);
+        });
+        if (force) {
+            state.translationRequested = true;
+        }
+    }
+
+    function cancelTranslation(state) {
+        if (!state.translationRequest) {
+            return;
+        }
+        pycmd(
+            `anki_lookup:${JSON.stringify({
+                action: "translate_cancel",
+                request_id: state.translationRequest,
+                popup_token: state.token,
+            })}`,
+        );
+        state.translationRequest = 0;
+        state.translation = {
+            status: "error",
+            message: "Translation cancelled.",
+            provider: translationSettings.provider,
+        };
+        refreshTranslationPanel(state);
+    }
+
+    function openExternalTranslation(state) {
+        if (!state.translationSentence) {
+            return;
+        }
+        pycmd(
+            `anki_lookup:${JSON.stringify({
+                action: "open_external",
+                request_id: ++requestSequence,
+                popup_token: state.token,
+                text: state.translationSentence,
+            })}`,
+        );
+    }
+
+    function refreshTranslationPanel(state) {
+        const body = state.element.querySelector(".anki-lookup__translation-body");
+        if (body) {
+            renderTranslationState(state, body);
+        }
+    }
+
+    /* The channel Python pushes late results down. A translation waits on a browser
+       and a note add runs as a background collection operation, so neither can be
+       answered from the pycmd handler that started it. */
+    window.AnkiLookupPushResult = (payload) => {
+        if (!payload) {
+            return;
+        }
+        const state = popups.find((candidate) => candidate.token === payload.popup_token);
+        if (!state || !state.element.isConnected) {
+            return;
+        }
+        if (core.isCurrentTranslation(payload, state.token, state.translationRequest)) {
+            state.translation = payload;
+            refreshTranslationPanel(state);
+            return;
+        }
+        if (core.isCurrentNote(payload, state.token, state.noteRequest)) {
+            state.note = payload;
+            renderNoteStatus(state);
+        }
+    };
 
     function renderTabs(state, response) {
         const body = state.element.querySelector(".anki-lookup__body");
@@ -926,7 +1327,12 @@
         const tabsLabel = document.createElement("div");
         tabsLabel.className = "anki-lookup__tabs-label";
         tabsLabel.textContent = "Sources";
+        // Decorative: a tablist may only contain tabs, and the list already carries
+        // aria-label="Lookup sources". Without this a screen reader announces a
+        // stray "Sources" item among the tabs.
+        tabsLabel.setAttribute("aria-hidden", "true");
         tabs.appendChild(tabsLabel);
+        tabs.addEventListener("keydown", (event) => onTabsKeyDown(event, state));
         const panels = document.createElement("div");
         panels.className = "anki-lookup__panels";
         let index = 0;
@@ -945,6 +1351,7 @@
             panel.setAttribute("tabindex", "0");
             tabs.appendChild(button);
             panels.appendChild(panel);
+            return id;
         }
         if (appearance.dictionary_layout === "continuous") {
             addTab(
@@ -970,8 +1377,23 @@
                 addTab("Dictionary", empty);
             }
         }
-        addTab("Google Translate", createProviderPanel("Google Translate", response.sentence));
-        addTab("DeepL", createProviderPanel("DeepL", response.sentence));
+        // One tab, for the configured provider. The old build showed both Google and
+        // DeepL unconditionally, but only one of them is ever the one that would run:
+        // the provider is a setting, not a per-lookup choice.
+        const translationTab = addTab(
+            core.providerLabel(translationSettings.provider),
+            createTranslationPanel(state, response.sentence),
+        );
+        state.translationTabId = translationTab;
+        state.translationRequested = false;
+        state.translationSentence = response.sentence || "";
+        state.translation = null;
+        // A new lookup is a new subject. Carrying "Note added." across to a different
+        // word would claim something untrue about it.
+        state.note = null;
+        state.noteEntry = null;
+        state.noteRequest = 0;
+
         state.element.insertBefore(tabs, body);
         body.appendChild(panels);
         activateTab(state, tabs.querySelector("button").dataset.tab);
@@ -981,14 +1403,51 @@
         if (!id) {
             return;
         }
+        state.activeTabId = id;
         for (const tab of state.element.querySelectorAll("button[data-tab]")) {
             const active = tab.dataset.tab === id;
             tab.classList.toggle("anki-lookup__tab--active", active);
             tab.setAttribute("aria-selected", String(active));
+            // Roving tabindex: one stop for the whole rail, then arrow keys within it.
+            // Leaving every tab focusable would make Tab walk through all of them.
+            tab.tabIndex = active ? 0 : -1;
         }
         for (const panel of state.element.querySelectorAll(".anki-lookup__panel")) {
             panel.hidden = panel.id !== id;
         }
+
+        // Translate only when the user actually opens the tab, and only once. Every
+        // hold-to-scan pointer move re-renders these tabs; translating on render
+        // would queue a job per mouse move against a serial extension.
+        if (id !== state.translationTabId) {
+            return;
+        }
+        const shouldRequest = core.shouldRequestTranslation({
+            sentence: state.translationSentence,
+            requested: state.translationRequested,
+        });
+        if (shouldRequest) {
+            state.translationRequested = true;
+            requestTranslation(state, state.translationSentence);
+        }
+    }
+
+    function onTabsKeyDown(event, state) {
+        if (!core.isTabNavigationKey(event.key)) {
+            return;
+        }
+        const tabs = [...state.element.querySelectorAll("button[data-tab]")];
+        if (tabs.length < 2) {
+            return;
+        }
+        const current = tabs.findIndex((tab) => tab.dataset.tab === state.activeTabId);
+        const next = core.nextTabIndex(current, tabs.length, event.key);
+        if (next === current) {
+            return;
+        }
+        event.preventDefault();
+        activateTab(state, tabs[next].dataset.tab);
+        tabs[next].focus();
     }
 
     function showError(state, message, rect) {
@@ -1015,7 +1474,11 @@
             window.innerHeight,
             margin,
         );
-        if (state.pinned && state.manualPosition) {
+        // Pinned popups have always taken this path. A popup the user has resized now
+        // takes it too: both mean "the user decided where and how big this is", and
+        // this branch is the one that applies their size verbatim instead of clamping
+        // it to whatever room is left beside the scanned word.
+        if ((state.pinned || state.userSized) && state.manualPosition) {
             const renderedSize = { ...state.size };
             state.renderedSize = renderedSize;
             applyPopupSize(state, renderedSize);
@@ -1045,6 +1508,7 @@
                   window.innerHeight,
                   margin,
                   10,
+                  state.userSized,
               )
             : core.popupPosition(
                   state.anchorRect,
@@ -1053,6 +1517,7 @@
                   window.innerHeight,
                   margin,
                   10,
+                  state.userSized,
               );
         const renderedSize = {
             width: state.size.width,
@@ -1130,6 +1595,8 @@
         }
         appearance = nextConfig.appearance || {};
         pinShortcut = (nextConfig.lookup || {}).pin_shortcut || "Ctrl+Shift+K";
+        translationSettings = normalizeTranslationSettings(nextConfig.translation);
+        notesSettings = normalizeNotesSettings(nextConfig.notes);
         for (const state of popups) {
             applyAppearance(state);
             if (state.lastResponse) {
@@ -1240,7 +1707,12 @@
                 if (selection) {
                     event.preventDefault();
                     const state = targetPopupFor(null);
-                    requestLookup(state, selection.term, selection.rect, selection.sentence);
+                    requestLookup(
+                        state,
+                        selection.term,
+                        selection.rect,
+                        selection.sentenceContext,
+                    );
                 }
             }
             if (

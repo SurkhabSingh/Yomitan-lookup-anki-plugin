@@ -35,9 +35,13 @@ def main() -> int:
     class FakeAddonManager:
         def __init__(self) -> None:
             self.web_exports: tuple[str, str] | None = None
+            self.config_action_registered = False
 
         def setWebExports(self, module_name: str, pattern: str) -> None:
             self.web_exports = (module_name, pattern)
+
+        def setConfigAction(self, module_name: str, fn: object) -> None:
+            self.config_action_registered = True
 
         def addonFromModule(self, module_name: str) -> str:
             return arguments.package
@@ -61,17 +65,41 @@ def main() -> int:
     main_window.addonManager = FakeAddonManager()
     aqt.mw = main_window
     callback()
-    action_names = [action.text() for action in main_window.form.menuTools.actions()]
 
-    expected_action = "Anki Lookup: About"
-    if expected_action not in action_names:
-        raise RuntimeError(f"Expected Tools action was not installed: {action_names}")
-    dictionary_action = "Anki Lookup: Manage Dictionaries..."
-    if dictionary_action not in action_names:
-        raise RuntimeError(f"Dictionary manager action was not installed: {action_names}")
-    settings_action = "Anki Lookup: Settings..."
-    if settings_action not in action_names:
-        raise RuntimeError(f"Settings action was not installed: {action_names}")
+    # One submenu, not five siblings: Tools belongs to Anki, not to us.
+    top_level = main_window.form.menuTools.actions()
+    submenus = [action.menu() for action in top_level if action.menu() is not None]
+    if len(top_level) != 1 or not submenus:
+        raise RuntimeError(
+            f"Expected exactly one Tools submenu, found: {[a.text() for a in top_level]}"
+        )
+
+    menu = submenus[0]
+    if menu.title() != "Anki Lookup":
+        raise RuntimeError(f"Submenu is misnamed: {menu.title()}")
+
+    action_names = [action.text() for action in menu.actions()]
+    for expected in (
+        "Manage Dictionaries...",
+        "Note Preset...",
+        "Settings...",
+        "Diagnostics...",
+        "About",
+    ):
+        if expected not in action_names:
+            raise RuntimeError(f"Submenu entry missing: {expected} (have {action_names})")
+
+    # Anki's own Config button must reach the settings dialog rather than falling back
+    # to a raw JSON editor over config.json.
+    if not main_window.addonManager.config_action_registered:
+        raise RuntimeError("setConfigAction was not registered")
+
+    # The bridge is off by default, so reaching this point proves the Tools actions
+    # above survived _start_translation_bridge() rather than being aborted by it.
+    diagnostics_module = importlib.import_module(f"{arguments.package}.ui.diagnostics")
+    report = diagnostics_module.diagnostics_report()
+    if "Translation bridge" not in report:
+        raise RuntimeError(f"Diagnostics did not report bridge status: {report}")
 
     dictionary_manager_module = importlib.import_module(
         f"{arguments.package}.ui.dictionary_manager"
@@ -154,8 +182,9 @@ def main() -> int:
                 "anki_version": importlib.metadata.version("anki"),
                 "addon_module": module.__name__,
                 "hook_registered": True,
-                "action_visible": True,
-                "action_name": expected_action,
+                "tools_submenu": menu.title(),
+                "submenu_entries": action_names,
+                "config_action_registered": True,
                 "dictionary_manager_action_visible": True,
                 "dictionary_manager_constructed": True,
                 "dictionary_multi_selection": True,
