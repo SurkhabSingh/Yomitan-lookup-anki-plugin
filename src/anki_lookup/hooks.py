@@ -177,7 +177,7 @@ def _handle_add_note(payload: dict[str, Any]) -> dict[str, Any]:
             request.request_id,
             request.popup_token,
             DUPLICATE,
-            "A note with this expression already exists.",
+            _duplicate_message(preset),
             note_id=note_id,
         )
 
@@ -194,6 +194,21 @@ def _handle_open_note(payload: dict[str, Any]) -> dict[str, Any]:
         logger.exception("Anki Lookup could not open a note")
         return error_result("Could not open the note.")
     return {"status": "opened", "note_id": note_id}
+
+
+def _duplicate_message(preset: dict[str, Any]) -> str:
+    """Say where the existing note was found.
+
+    The only feedback the user gets, so it has to name the scope that was actually
+    searched: "already exists" alone leaves them wondering why a word they have never
+    added to this deck is being refused.
+    """
+
+    from .notes.duplicates import SCOPE_DECK, duplicate_scope
+
+    if duplicate_scope(preset) == SCOPE_DECK:
+        return "This note is already in this deck."
+    return "This note is already in your collection."
 
 
 def _note_context(request: Any) -> Any:

@@ -6,7 +6,13 @@ import unittest
 from typing import ClassVar
 
 from anki_lookup.config import DEFAULT_CONFIG, runtime_config
-from anki_lookup.notes.duplicates import duplicate_field, should_check_duplicates
+from anki_lookup.notes.duplicates import (
+    SCOPE_COLLECTION,
+    SCOPE_DECK,
+    duplicate_field,
+    duplicate_scope,
+    should_check_duplicates,
+)
 from anki_lookup.notes.field_mapping import (
     is_configured,
     mapped_fields,
@@ -178,6 +184,23 @@ class DuplicatePolicyTests(unittest.TestCase):
         self.assertTrue(should_check_duplicates({"check_duplicates": True}, "食べる"))
         self.assertTrue(should_check_duplicates({}, "食べる"))
 
+    def test_duplicates_are_looked_for_in_the_target_deck_by_default(self) -> None:
+        # A word saved in one deck is not a duplicate of one being added to an
+        # unrelated deck: that deck genuinely does not have it, and the add is
+        # legitimate. Searching the whole collection reported it anyway.
+        self.assertEqual(duplicate_scope({}), SCOPE_DECK)
+
+    def test_a_collection_wide_scope_is_honoured(self) -> None:
+        self.assertEqual(duplicate_scope({"duplicate_scope": "collection"}), SCOPE_COLLECTION)
+
+    def test_an_unusable_scope_falls_back_to_the_deck(self) -> None:
+        # Falling back to the deck rather than the collection keeps the failure in the
+        # permissive direction: a duplicate that slips through is recoverable, a
+        # legitimate add that is blocked is not obvious to the user.
+        for value in ("galaxy", "", None, 7, True, ["deck"]):
+            with self.subTest(value=value):
+                self.assertEqual(duplicate_scope({"duplicate_scope": value}), SCOPE_DECK)
+
 
 class NotesConfigTests(unittest.TestCase):
     def test_a_list_shaped_mapping_survives_a_config_round_trip(self) -> None:
@@ -245,6 +268,19 @@ class NotesConfigTests(unittest.TestCase):
         config = runtime_config({"notes": {"check_duplicates": "yes"}})
 
         self.assertTrue(config["notes"]["check_duplicates"])
+
+    def test_the_duplicate_scope_defaults_to_the_deck(self) -> None:
+        self.assertEqual(runtime_config({})["notes"]["duplicate_scope"], "deck")
+
+    def test_an_unknown_duplicate_scope_falls_back(self) -> None:
+        config = runtime_config({"notes": {"duplicate_scope": "galaxy"}})
+
+        self.assertEqual(config["notes"]["duplicate_scope"], "deck")
+
+    def test_a_collection_duplicate_scope_survives_the_config(self) -> None:
+        config = runtime_config({"notes": {"duplicate_scope": "collection"}})
+
+        self.assertEqual(config["notes"]["duplicate_scope"], "collection")
 
 
 if __name__ == "__main__":

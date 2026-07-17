@@ -6,8 +6,16 @@ from copy import deepcopy
 from typing import Any
 
 from ..config import runtime_config
+from ..notes.duplicates import SCOPE_COLLECTION, SCOPE_DECK
 from ..notes.field_mapping import normalize_mapping
 from ..notes.markers import MarkerRegistry, build_registry
+
+#: Where to look for an existing note. "This deck" covers its subdecks, following
+#: Anki's own deck: semantics.
+DUPLICATE_SCOPES = (
+    ("This deck and its subdecks", SCOPE_DECK),
+    ("The whole collection", SCOPE_COLLECTION),
+)
 
 #: A guess per field name, so a first-time user opens the editor on a working preset
 #: rather than a column of empty boxes. Matched against the whole field name, case
@@ -125,6 +133,19 @@ class NotePresetEditor:
         self.duplicate_field = QComboBox()
         form.addRow("Check for duplicates in", self.duplicate_field)
 
+        # Static options, so unlike the field combo this is filled in here rather than
+        # rebuilt whenever the note type changes.
+        self.duplicate_scope = QComboBox()
+        for label, value in DUPLICATE_SCOPES:
+            self.duplicate_scope.addItem(label, value)
+        self._select_data(self.duplicate_scope, self._preset["duplicate_scope"])
+        self.duplicate_scope.setToolTip(
+            "A word saved in another deck is not a duplicate of one you are adding "
+            "here. Searching this deck also covers its subdecks, the same way deck: "
+            "does in the card browser."
+        )
+        form.addRow("Look for them in", self.duplicate_scope)
+
         layout.addLayout(form)
 
         fields_label = QLabel("Fields")
@@ -139,8 +160,8 @@ class NotePresetEditor:
         self._rebuild_fields()
 
         self.notetype.currentIndexChanged.connect(self._rebuild_fields)
-        self.check_duplicates.stateChanged.connect(self._update_duplicate_field_state)
-        self._update_duplicate_field_state()
+        self.check_duplicates.stateChanged.connect(self._update_duplicate_controls)
+        self._update_duplicate_controls()
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
@@ -263,8 +284,12 @@ class NotePresetEditor:
         index = self.duplicate_field.findData(target)
         self.duplicate_field.setCurrentIndex(max(0, index))
 
-    def _update_duplicate_field_state(self) -> None:
-        self.duplicate_field.setEnabled(self.check_duplicates.isChecked())
+    def _update_duplicate_controls(self) -> None:
+        """Both duplicate controls are meaningless when checking is off."""
+
+        enabled = self.check_duplicates.isChecked()
+        self.duplicate_field.setEnabled(enabled)
+        self.duplicate_scope.setEnabled(enabled)
 
     def _current_mapping(self) -> list[dict[str, str]]:
         if not self._field_editors:
@@ -293,6 +318,7 @@ class NotePresetEditor:
         notes["tags"] = self.tags.text().split()
         notes["check_duplicates"] = self.check_duplicates.isChecked()
         notes["duplicate_field"] = self.duplicate_field.currentData() or ""
+        notes["duplicate_scope"] = self.duplicate_scope.currentData() or SCOPE_DECK
 
         self._addon_manager.writeConfig(self._package, candidate)
         self._apply_to_reviewer(runtime_config(candidate))

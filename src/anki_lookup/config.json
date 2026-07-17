@@ -26,7 +26,8 @@
     "field_mapping": [],
     "tags": ["anki-lookup"],
     "duplicate_field": "",
-    "check_duplicates": true
+    "check_duplicates": true,
+    "duplicate_scope": "deck"
   },
   "translation": {
     "provider": "google-translate",

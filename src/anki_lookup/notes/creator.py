@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable
 
-from .duplicates import duplicate_field, should_check_duplicates
+from .duplicates import SCOPE_DECK, duplicate_field, duplicate_scope, should_check_duplicates
 from .field_mapping import is_configured, mapping_pairs
 from .markers import MarkerRegistry, NoteContext, render_fields
 
@@ -55,8 +55,15 @@ def find_duplicate(
 ) -> int:
     """Return the id of an existing note with the same key field, or 0.
 
+    Scoped to the deck the note is going into unless the preset says otherwise. A
+    collection-wide search reported a word saved in one deck as a duplicate when adding
+    it to an unrelated one — the second deck does not have that note, and the add is
+    legitimate.
+
     Escaping is Anki's: ``build_search_string`` turns arbitrary text into a literal
-    search term, so a definition containing quotes or ``OR`` cannot alter the query.
+    search term, so a definition containing quotes or ``OR``, or a deck named
+    ``a OR b``, cannot alter the query. It also leaves ``::`` structural, so a subdeck
+    name still addresses the hierarchy rather than a deck literally called that.
     """
 
     from anki.collection import SearchNode
@@ -79,12 +86,39 @@ def find_duplicate(
     if not should_check_duplicates(preset, value):
         return 0
 
-    search = mw.col.build_search_string(
+    nodes = [
         SearchNode(note=notetype["name"]),
         SearchNode(field=SearchNode.Field(field_name=key_field, text=value)),
-    )
-    note_ids = mw.col.find_notes(search)
+    ]
+
+    if duplicate_scope(preset) == SCOPE_DECK:
+        deck_name = _target_deck_name(preset)
+        if not deck_name:
+            # The deck was deleted between saving the preset and this lookup, so there
+            # is no scope to search. Report no duplicate: add_note_from_lookup checks
+            # the deck exists before reaching here, and for a direct caller a
+            # recoverable duplicate beats blocking a legitimate add.
+            return 0
+        nodes.append(SearchNode(deck=deck_name))
+
+    note_ids = mw.col.find_notes(mw.col.build_search_string(*nodes))
     return int(note_ids[0]) if note_ids else 0
+
+
+def _target_deck_name(preset: dict[str, Any]) -> str:
+    """The name of the deck a note would be added to, for a search node.
+
+    ``decks.get`` rather than ``decks.name``: the latter answers ``"[no deck]"`` for an
+    id that no longer exists, which would silently search a deck by that name instead
+    of telling us the deck is gone.
+    """
+
+    from aqt import mw
+
+    if mw is None or mw.col is None:
+        return ""
+    deck = mw.col.decks.get(preset["deck_id"])
+    return str(deck.get("name", "")) if deck else ""
 
 
 def add_note_from_lookup(

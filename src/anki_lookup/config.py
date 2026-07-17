@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from .notes.duplicates import ALLOWED_SCOPES as ALLOWED_DUPLICATE_SCOPES
 from .notes.field_mapping import is_configured, normalize_mapping
 from .translation.languages import normalize_target_language, target_language_label
 from .translation.models import ALLOWED_PROVIDERS
@@ -42,6 +43,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "tags": ["anki-lookup"],
         "duplicate_field": "",
         "check_duplicates": True,
+        # Search the deck being added to, not the whole collection: a word saved in one
+        # deck is not a duplicate of one being added to an unrelated deck.
+        "duplicate_scope": "deck",
     },
     "translation": {
         "provider": "google-translate",
@@ -134,6 +138,9 @@ def _validate_notes(notes: dict[str, Any]) -> None:
 
     if not isinstance(notes["check_duplicates"], bool):
         notes["check_duplicates"] = defaults["check_duplicates"]
+
+    if notes["duplicate_scope"] not in ALLOWED_DUPLICATE_SCOPES:
+        notes["duplicate_scope"] = defaults["duplicate_scope"]
 
     tags = notes["tags"]
     notes["tags"] = (

@@ -14,6 +14,29 @@ from __future__ import annotations
 
 from typing import Any
 
+#: Where to look for an existing note.
+#:
+#: ``deck`` searches the deck the note is being added to, and — following Anki's own
+#: ``deck:`` semantics — its subdecks. ``collection`` searches everywhere.
+SCOPE_DECK = "deck"
+SCOPE_COLLECTION = "collection"
+
+ALLOWED_SCOPES = (SCOPE_DECK, SCOPE_COLLECTION)
+
+
+def duplicate_scope(preset: dict[str, Any]) -> str:
+    """Return where to look for a duplicate.
+
+    Defaults to the deck being added to. Searching the whole collection means a word
+    saved in one deck blocks adding it to an unrelated one, which is wrong for anyone
+    keeping separate decks: the second deck genuinely does not have that note.
+    """
+
+    configured = preset.get("duplicate_scope")
+    if configured in ALLOWED_SCOPES:
+        return str(configured)
+    return SCOPE_DECK
+
 
 def duplicate_field(preset: dict[str, Any], field_names: list[str]) -> str:
     """Return the field to check for duplicates.
