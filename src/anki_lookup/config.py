@@ -20,6 +20,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "debounce_ms": 20,
         "maximum_term_length": 200,
         "allow_nested_popups": True,
+        # Click a kanji in a term's headword to open its kanji entry in a child popup.
+        "allow_kanji_click": True,
         "maximum_popup_depth": 4,
         "frequency_sort_dictionary_id": 0,
         "frequency_sort_order": "auto",

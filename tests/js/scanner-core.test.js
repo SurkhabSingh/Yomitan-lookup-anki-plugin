@@ -68,6 +68,25 @@ test("bounds nested popup depth and respects the feature toggle", () => {
     assert.equal(core.canOpenNestedPopup(0, false, 4), false);
 });
 
+test("recognises kanji, and only kanji, in a headword", () => {
+    // Only a kanji has a kanji entry to open, so a clickable-kanji headword must not
+    // mark kana or Latin as clickable.
+    assert.equal(core.isKanji("食"), true);
+    assert.equal(core.isKanji("々"), true, "the iteration mark stands in for a kanji");
+    assert.equal(core.isKanji("べ"), false, "hiragana");
+    assert.equal(core.isKanji("ル"), false, "katakana");
+    assert.equal(core.isKanji("a"), false);
+    assert.equal(core.isKanji("1"), false);
+    assert.equal(core.isKanji("ー"), false, "the long-vowel mark is not a kanji");
+    assert.equal(core.isKanji(""), false);
+    assert.equal(core.isKanji(undefined), false);
+});
+
+test("only the kanji in a mixed headword are clickable", () => {
+    const clickable = [...Array.from("食べる")].filter((ch) => core.isKanji(ch));
+    assert.deepEqual(clickable, ["食"]);
+});
+
 test("groups small kana into Japanese morae", () => {
     assert.deepEqual(core.japaneseMorae("きょう"), ["きょ", "う"]);
     assert.deepEqual(core.japaneseMorae("キャット"), ["キャ", "ッ", "ト"]);

@@ -33,6 +33,7 @@
         : 20;
     const maximumTermLength = lookupConfig.maximum_term_length || 200;
     const allowNestedPopups = lookupConfig.allow_nested_popups !== false;
+    const allowKanjiClick = lookupConfig.allow_kanji_click !== false;
     const maximumPopupDepth = lookupConfig.maximum_popup_depth || 4;
     const shortcut = lookupConfig.selection_shortcut || "Ctrl+Shift+L";
     let pinShortcut = lookupConfig.pin_shortcut || "Ctrl+Shift+K";
@@ -145,6 +146,7 @@
         ].join("");
         element.addEventListener("pointerdown", (event) => onPopupPointerDown(event, state));
         element.addEventListener("click", (event) => onPopupClick(event, state));
+        element.addEventListener("keydown", (event) => onPopupKeyDown(event, state));
         document.body.appendChild(element);
         popupByElement.set(element, state);
         popups.push(state);
@@ -290,6 +292,11 @@
             } else if (action.dataset.popupAction === "close") {
                 closePopup(state);
             }
+            return;
+        }
+        const kanji = event.target.closest("[data-kanji]");
+        if (kanji) {
+            openKanjiLookup(state, kanji.dataset.kanji, kanji.getBoundingClientRect());
             return;
         }
         const tab = event.target.closest("button[data-tab]");
@@ -867,6 +874,62 @@
         }
     }
 
+    function onPopupKeyDown(event, state) {
+        // A kanji span is a role="button", so Enter and Space must activate it the way
+        // a real button would.
+        if (event.key !== "Enter" && event.key !== " ") {
+            return;
+        }
+        const kanji = event.target.closest("[data-kanji]");
+        if (kanji) {
+            event.preventDefault();
+            openKanjiLookup(state, kanji.dataset.kanji, kanji.getBoundingClientRect());
+        }
+    }
+
+    function openKanjiLookup(state, character, rect) {
+        // Reuses the nested-popup path hover-scan already uses: targetPopupFor gives a
+        // child (reusing an existing one), and a plain lookup of a single kanji already
+        // returns its kanji entry, so no dedicated request or Python change is needed.
+        if (
+            !allowKanjiClick ||
+            !character ||
+            !core.canOpenNestedPopup(state.depth, allowNestedPopups, maximumPopupDepth)
+        ) {
+            return;
+        }
+        const child = targetPopupFor(state);
+        requestLookup(child, character, rect, null, [character]);
+    }
+
+    function appendHeadword(target, entry) {
+        // Only a term's kanji become clickable spans: a kanji entry's own character is
+        // not a link to itself, and kana has no entry to open. With the feature off
+        // this is one plain text node — exactly the DOM the headword had before. The
+        // depth limit is enforced on click, not here, to avoid threading popup state
+        // through the render path for a case (max nesting) that is rarely reached.
+        if (!allowKanjiClick || entry.entry_type === "kanji") {
+            target.textContent = entry.expression;
+            return;
+        }
+
+        for (const character of Array.from(entry.expression)) {
+            if (core.isKanji(character)) {
+                const span = document.createElement("span");
+                span.className = "anki-lookup__kanji";
+                span.dataset.kanji = character;
+                span.textContent = character;
+                span.setAttribute("role", "button");
+                span.setAttribute("tabindex", "0");
+                span.setAttribute("aria-label", `Look up the kanji ${character}`);
+                span.title = `Look up ${character}`;
+                target.appendChild(span);
+            } else {
+                target.appendChild(document.createTextNode(character));
+            }
+        }
+    }
+
     function createDictionaryPanel(entries) {
         const panel = document.createElement("div");
         for (const entry of entries) {
@@ -877,7 +940,7 @@
             const headingText = document.createElement("div");
             headingText.className = "anki-lookup__headword";
             const expression = document.createElement("strong");
-            expression.textContent = entry.expression;
+            appendHeadword(expression, entry);
             headingText.appendChild(expression);
             if (entry.reading && entry.reading !== entry.expression) {
                 const reading = document.createElement("span");

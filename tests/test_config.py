@@ -68,6 +68,17 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertNotIn("unexpected", config)
         self.assertNotIn("unexpected", config["lookup"])
 
+    def test_kanji_click_defaults_on_and_a_non_boolean_falls_back(self) -> None:
+        # A bool flag: _merge_known only accepts a value matching the default's type,
+        # so a non-bool from user config is dropped and the default survives.
+        self.assertTrue(runtime_config({})["lookup"]["allow_kanji_click"])
+        self.assertTrue(
+            runtime_config({"lookup": {"allow_kanji_click": "no"}})["lookup"]["allow_kanji_click"]
+        )
+        self.assertFalse(
+            runtime_config({"lookup": {"allow_kanji_click": False}})["lookup"]["allow_kanji_click"]
+        )
+
     def test_translation_defaults_keep_the_bridge_off(self) -> None:
         # Turning the bridge on binds a port the Wonder of U desktop app also wants.
         # Installing this add-on must never take that port by surprise.

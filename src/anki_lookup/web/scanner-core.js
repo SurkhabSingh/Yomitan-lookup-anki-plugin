@@ -12,6 +12,10 @@
     const JAPANESE_CHARACTER_PATTERN =
         /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}々〆ヶー]/u;
     const SMALL_KANA_PATTERN = /[ぁぃぅぇぉゃゅょゎァィゥェォャュョヮ]/u;
+    // Han only, plus the iteration mark 々 which stands in for a repeated kanji. Not
+    // the same as JAPANESE_CHARACTER_PATTERN, which also matches kana: only a kanji
+    // has a kanji entry to open, so kana in a headword must stay unclickable.
+    const KANJI_PATTERN = /[\p{Script=Han}々]/u;
     const segmenters = new Map();
 
     function getSegmenter(locale, granularity) {
@@ -53,6 +57,10 @@
             sentence = sentence.replace(/\s*\}+$/u, "");
         }
         return sentence.trim();
+    }
+
+    function isKanji(character) {
+        return typeof character === "string" && KANJI_PATTERN.test(character);
     }
 
     function japaneseCandidates(text, start, maximumLength) {
@@ -821,6 +829,7 @@
         isCurrentTranslation,
         isPopupDescendant,
         isResizeCorner,
+        isKanji,
         isTabNavigationKey,
         japaneseMorae,
         japaneseCandidates,

@@ -8,6 +8,7 @@
     "debounce_ms": 20,
     "maximum_term_length": 200,
     "allow_nested_popups": true,
+    "allow_kanji_click": true,
     "maximum_popup_depth": 4,
     "frequency_sort_dictionary_id": 0,
     "frequency_sort_order": "auto"

@@ -405,6 +405,26 @@
     line-height: 1.2;
 }
 
+/* A clickable kanji. Quiet at rest so the headword still reads as a word, not a row
+   of links; the affordance appears on hover and on keyboard focus. */
+.anki-lookup-popup .anki-lookup__kanji {
+    cursor: pointer;
+    border-radius: 4px;
+    transition:
+        background-color 100ms ease,
+        color 100ms ease;
+}
+
+.anki-lookup-popup .anki-lookup__kanji:hover {
+    color: var(--anki-lookup-accent);
+    background: var(--anki-lookup-accent-soft);
+}
+
+.anki-lookup-popup .anki-lookup__kanji:focus-visible {
+    outline: 2px solid var(--anki-lookup-accent);
+    outline-offset: 1px;
+}
+
 .anki-lookup-popup .anki-lookup__reading {
     color: var(--anki-lookup-muted);
     font-size: 0.88em;
