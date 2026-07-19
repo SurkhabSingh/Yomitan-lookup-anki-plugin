@@ -133,6 +133,67 @@ def main() -> int:
         raise RuntimeError("Settings dialog does not expose the pin shortcut")
     settings.dialog.close()
 
+    # The recommended note type must build against the real Anki models API, and the
+    # Yomitan importer must load and parse under Anki's Python. Both are reachable from
+    # the preset editor's new buttons; exercise the underlying functions directly since
+    # the fake main window has no collection to construct the dialog against.
+    import tempfile
+
+    from anki.collection import Collection
+
+    recommended = importlib.import_module(f"{arguments.package}.notes.recommended")
+    temp_collection = Collection(str(Path(tempfile.mkdtemp()) / "smoke.anki2"))
+    try:
+        first_id = recommended.ensure_note_type(temp_collection)
+        second_id = recommended.ensure_note_type(temp_collection)
+        if first_id != second_id:
+            raise RuntimeError("Recommended note type creation is not idempotent")
+        created = temp_collection.models.by_name(recommended.NOTE_TYPE_NAME)
+        if created is None:
+            raise RuntimeError("Recommended note type was not created")
+        field_names = [field["name"] for field in created["flds"]]
+        if field_names != list(recommended.FIELD_NAMES):
+            raise RuntimeError(f"Recommended note type has unexpected fields: {field_names}")
+        if "{{furigana:Furigana}}" not in created["tmpls"][0]["afmt"]:
+            raise RuntimeError("Recommended card template is missing the furigana filter")
+    finally:
+        temp_collection.close()
+
+    yomitan_import = importlib.import_module(f"{arguments.package}.notes.yomitan_import")
+    sample_backup = json.dumps(
+        {
+            "options": {
+                "profileCurrent": 0,
+                "profiles": [
+                    {
+                        "name": "Default",
+                        "options": {
+                            "anki": {
+                                "cardFormats": [
+                                    {
+                                        "type": "term",
+                                        "name": "Vocab",
+                                        "deck": "D",
+                                        "model": "M",
+                                        "fields": {
+                                            "Front": {"value": "{expression}"},
+                                            "Audio": {"value": "{audio}"},
+                                        },
+                                    }
+                                ]
+                            }
+                        },
+                    }
+                ],
+            }
+        }
+    )
+    imported = yomitan_import.parse_backup(sample_backup)
+    if not imported.presets or imported.presets[0].deck_name != "D":
+        raise RuntimeError("Yomitan importer did not parse the sample backup")
+    if not any(marker == "audio" for _, marker in imported.presets[0].dropped_markers):
+        raise RuntimeError("Yomitan importer did not report the unsupported audio marker")
+
     reviewer = object.__new__(Reviewer)
     web_content = WebContent()
     hooks = importlib.import_module(f"{arguments.package}.hooks")

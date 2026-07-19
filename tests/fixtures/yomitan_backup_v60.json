@@ -1,0 +1,38 @@
+{
+  "comment": "Fixture: a mid-era Yomitan backup (options v59-63), terms/kanji sections with {value, overwriteMode} fields. Hand-written.",
+  "version": 4,
+  "options": {
+    "version": 60,
+    "profileCurrent": 0,
+    "profiles": [
+      {
+        "id": "default",
+        "name": "Default",
+        "options": {
+          "anki": {
+            "enable": true,
+            "tags": ["yomitan"],
+            "duplicateScope": "collection",
+            "checkForDuplicates": false,
+            "terms": {
+              "deck": "Japanese",
+              "model": "Basic",
+              "fields": {
+                "Front": { "value": "{expression}", "overwriteMode": "coalesce" },
+                "Back": { "value": "{glossary}", "overwriteMode": "coalesce" }
+              }
+            },
+            "kanji": {
+              "deck": "Japanese",
+              "model": "Basic",
+              "fields": {
+                "Front": { "value": "{character}", "overwriteMode": "coalesce" },
+                "Back": { "value": "{glossary}", "overwriteMode": "coalesce" }
+              }
+            }
+          }
+        }
+      }
+    ]
+  }
+}

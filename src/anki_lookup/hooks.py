@@ -232,9 +232,11 @@ def _note_context(request: Any) -> Any:
     cloze = build_cloze(request.sentence, offset, request.source_term or request.expression)
     cloze = _with_body_kana(cloze, entry)
 
+    # context_for guarantees the selected entry is among entries, so a marker can
+    # never see a narrower world than the one the note is built from.
     return context_for(
         entry=entry,
-        entries=entries or (entry,),
+        entries=entries,
         cloze=cloze,
         source_term=request.source_term or request.selected_text or request.expression,
         translation=request.translation,
@@ -244,9 +246,22 @@ def _note_context(request: Any) -> Any:
 
 
 def _resolve_entries(request: Any) -> tuple[Any, ...]:
-    term = request.source_term or request.expression
+    """Look the headword up again, to give the markers every dictionary's entry.
+
+    **By the headword, not the scanned surface.** The two travel together in the
+    payload but have different jobs: ``source_term`` is the surface form as it
+    appeared in the sentence (食べました, or a fragment like アンフ when the segmenter
+    split a compound) and exists to quote the sentence in a cloze; ``expression`` is
+    the headword of the entry the user pressed Add on, and is the only term
+    guaranteed to hit the dictionaries that entry came from. Resolving by the surface
+    form is how a compound the segmenter split ended up with entries from the wrong
+    dictionary entirely.
+    """
+
     try:
-        _, entries = dictionary_service().lookup_candidates((term,), term)
+        _, entries = dictionary_service().lookup_candidates(
+            (request.expression,), request.expression
+        )
         return tuple(entries)
     except Exception:
         logger.exception("Anki Lookup could not re-resolve a lookup for a note")

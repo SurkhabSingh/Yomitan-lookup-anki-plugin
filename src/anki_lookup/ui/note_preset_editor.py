@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
 from ..config import runtime_config
@@ -78,8 +79,10 @@ class NotePresetEditor:
             QDialog,
             QDialogButtonBox,
             QFormLayout,
+            QHBoxLayout,
             QLabel,
             QLineEdit,
+            QPushButton,
             QVBoxLayout,
             QWidget,
         )
@@ -147,6 +150,25 @@ class NotePresetEditor:
         form.addRow("Look for them in", self.duplicate_scope)
 
         layout.addLayout(form)
+
+        quick = QHBoxLayout()
+        recommended_button = QPushButton("Use recommended note type")
+        recommended_button.setToolTip(
+            "Create (or reuse) the 'Anki Lookup' note type and fill its fields. Your "
+            "deck choice is left as is."
+        )
+        recommended_button.clicked.connect(self._use_recommended_note_type)
+        quick.addWidget(recommended_button)
+
+        import_button = QPushButton("Import from Yomitan...")
+        import_button.setToolTip(
+            "Fill this preset from a Yomitan settings backup, so you do not have to "
+            "redo the deck, note type, and field mapping."
+        )
+        import_button.clicked.connect(self._import_from_yomitan)
+        quick.addWidget(import_button)
+        quick.addStretch(1)
+        layout.addLayout(quick)
 
         fields_label = QLabel("Fields")
         layout.addWidget(fields_label)
@@ -324,6 +346,204 @@ class NotePresetEditor:
         self._apply_to_reviewer(runtime_config(candidate))
         self.dialog.accept()
         tooltip("Anki Lookup note preset saved.", parent=self.dialog)
+
+    def _use_recommended_note_type(self) -> None:
+        """Create (or reuse) the recommended note type and fill its fields.
+
+        Nothing is written until Save — this only fills the editor, same as picking a
+        note type by hand.
+        """
+
+        from aqt.utils import showWarning, tooltip
+
+        from ..notes.recommended import NOTE_TYPE_NAME, ensure_note_type, preset_field_mapping
+
+        try:
+            notetype_id = ensure_note_type(self._mw.col)
+        except Exception:
+            showWarning(
+                "Anki Lookup could not create the recommended note type.",
+                parent=self.dialog,
+            )
+            return
+
+        # The combo was populated at open time, so a note type created just now is not
+        # in it yet; add it, then select it (which rebuilds the field rows).
+        if self.notetype.findData(notetype_id) < 0:
+            self.notetype.addItem(NOTE_TYPE_NAME, notetype_id)
+        self._select_data(self.notetype, notetype_id)
+        self._rebuild_fields()
+
+        self._apply_field_values(preset_field_mapping())
+        tooltip("Recommended note type ready. Review and Save.", parent=self.dialog)
+
+    def _import_from_yomitan(self) -> None:
+        """Fill the preset from a Yomitan settings backup. Fills only; never saves."""
+
+        from aqt.qt import QFileDialog
+        from aqt.utils import showInfo, showWarning
+
+        from ..notes.yomitan_import import YomitanImportError, parse_backup
+
+        path, _ = QFileDialog.getOpenFileName(
+            self.dialog,
+            "Import from Yomitan settings backup",
+            "",
+            "Yomitan settings (*.json);;All files (*)",
+        )
+        if not path:
+            return
+
+        try:
+            text = Path(path).read_text(encoding="utf-8")
+            result = parse_backup(text)
+        except YomitanImportError as error:
+            showWarning(str(error), parent=self.dialog)
+            return
+        except OSError as error:
+            showWarning(f"Could not read the file: {error}", parent=self.dialog)
+            return
+
+        preset = self._choose_imported_preset(result.presets)
+        if preset is None:
+            return
+
+        notetype_id = self._resolve_model(preset.model_name)
+        if notetype_id is None:
+            return  # _resolve_model has already explained why.
+
+        deck_id = self._resolve_deck(preset.deck_name)
+        if deck_id is None:
+            return
+
+        self._select_data(self.deck, deck_id)
+        self._select_data(self.notetype, notetype_id)
+        self._rebuild_fields()
+
+        applied, unknown_fields = self._apply_field_values(preset.field_mapping)
+        if preset.tags:
+            self.tags.setText(" ".join(preset.tags))
+        self.check_duplicates.setChecked(preset.check_duplicates)
+        self._select_data(self.duplicate_scope, preset.duplicate_scope)
+        self._update_duplicate_controls()
+
+        showInfo(
+            self._import_summary(preset, applied, unknown_fields),
+            parent=self.dialog,
+        )
+
+    def _choose_imported_preset(self, presets: list[Any]) -> Any:
+        """Pick which card format to import when the backup holds several."""
+
+        if len(presets) == 1:
+            return presets[0]
+
+        from aqt.qt import QInputDialog
+
+        labels = [f"{p.name} ({p.note_type})" for p in presets]
+        choice, ok = QInputDialog.getItem(
+            self.dialog,
+            "Choose a note format",
+            "This Yomitan backup has several. Which do you want to import?",
+            labels,
+            0,
+            False,
+        )
+        if not ok:
+            return None
+        return presets[labels.index(choice)]
+
+    def _resolve_model(self, model_name: str) -> int | None:
+        """Map a Yomitan model name to a note type id, or explain why we cannot.
+
+        We cannot invent a note type from an import: its fields are what the mapping
+        targets. A missing one is a hard stop with a clear message, not a half-fill.
+        """
+
+        from aqt.utils import showWarning
+
+        if not model_name:
+            showWarning(
+                "The Yomitan backup did not name a note type for this format.",
+                parent=self.dialog,
+            )
+            return None
+
+        model_id = self._mw.col.models.id_for_name(model_name)
+        if model_id is None:
+            showWarning(
+                f"Your Yomitan settings use the note type '{model_name}', which this "
+                "Anki profile does not have. Create it in Anki (or import the note type "
+                "Yomitan expects), then import again.",
+                parent=self.dialog,
+            )
+            return None
+        return int(model_id)
+
+    def _resolve_deck(self, deck_name: str) -> int | None:
+        """Map a Yomitan deck name to a deck id, offering to create a missing one."""
+
+        from aqt.utils import askUser
+
+        if not deck_name:
+            # No deck named; keep whatever the editor already had.
+            return int(self.deck.currentData() or 0) or None
+
+        existing = self._mw.col.decks.id_for_name(deck_name)
+        if existing is not None:
+            return int(existing)
+
+        if not askUser(
+            f"Your Yomitan settings use the deck '{deck_name}', which does not exist "
+            "here yet. Create it?",
+            parent=self.dialog,
+        ):
+            return int(self.deck.currentData() or 0) or None
+
+        created = self._mw.col.decks.id(deck_name, create=True)
+        if self.deck.findData(created) < 0:
+            self.deck.addItem(deck_name, created)
+        return int(created) if created is not None else None
+
+    def _apply_field_values(self, mapping: list[dict[str, str]]) -> tuple[list[str], list[str]]:
+        """Set the field editors from a mapping, by field name.
+
+        Returns the fields that were filled and the mapped fields the note type does
+        not have (so an import can report what could not be placed).
+        """
+
+        applied: list[str] = []
+        unknown: list[str] = []
+        for record in mapping:
+            editor = self._field_editors.get(record["field"])
+            if editor is None:
+                unknown.append(record["field"])
+                continue
+            editor.setText(record["value"])
+            applied.append(record["field"])
+        return applied, unknown
+
+    def _import_summary(self, preset: Any, applied: list[str], unknown_fields: list[str]) -> str:
+        lines = [f"Imported '{preset.name}' from Yomitan.", ""]
+        lines.append(f"Filled {len(applied)} field(s). Review, then Save.")
+
+        if unknown_fields:
+            lines += [
+                "",
+                "These fields were in your Yomitan setup but are not on this note type, "
+                "so they were skipped:",
+                "  " + ", ".join(unknown_fields),
+            ]
+
+        dropped = sorted({marker for _, marker in preset.dropped_markers})
+        if dropped:
+            lines += [
+                "",
+                "These Yomitan markers are not supported and were removed from the field values:",
+                "  " + ", ".join("{" + marker + "}" for marker in dropped),
+            ]
+
+        return "\n".join(lines)
 
     def _apply_to_reviewer(self, config: dict[str, Any]) -> None:
         import json

@@ -249,6 +249,25 @@ class PerDictionaryMarkerTests(unittest.TestCase):
         )
         self.assertEqual(render_field("{single-glossary-jmdict}", context, registry), "to eat")
 
+    def test_the_selected_entry_is_always_visible_to_aggregating_markers(self) -> None:
+        # The single-glossary bug: note creation re-resolved by the segmenter fragment
+        # (アンフ), which returned an unrelated dictionary's entries, while the entry
+        # the user chose (アンフェア from 旺文社) was passed separately. single-glossary
+        # iterated the re-resolved list, did not find 旺文社, and rendered empty — even
+        # though the popup showed it. context_for now guarantees the chosen entry is in
+        # the list, so the marker sees it whatever the re-resolve returned.
+        registry = build_registry(("旺文社", "Pixiv"))
+        chosen = _term(dictionary="旺文社", definitions=("アンフェア <unfair>",))
+        unrelated = _term(dictionary="Pixiv", definitions=("a Pixiv tag",))
+        context = context_for(chosen, entries=(unrelated,))
+
+        self.assertIn(chosen, context.entries)
+        # The angle brackets are escaped for the field, as all dictionary text is.
+        self.assertEqual(
+            render_field("{single-glossary-旺文社}", context, registry),
+            "アンフェア &lt;unfair&gt;",
+        )
+
     def test_a_dictionary_that_contributed_nothing_renders_empty(self) -> None:
         registry = build_registry(("JMdict", "Daijirin"))
         entry = _term(dictionary="JMdict")
@@ -256,6 +275,26 @@ class PerDictionaryMarkerTests(unittest.TestCase):
         self.assertEqual(
             render_field("{single-glossary-daijirin}", context_for(entry), registry), ""
         )
+
+
+class ContextInvariantTests(unittest.TestCase):
+    def test_the_entry_is_in_entries_when_the_list_omits_it(self) -> None:
+        entry = _term(dictionary="旺文社")
+        context = context_for(entry, entries=(_term(dictionary="Pixiv"),))
+
+        self.assertIn(entry, context.entries)
+
+    def test_the_entry_is_not_duplicated_when_already_present(self) -> None:
+        entry = _term(dictionary="旺文社")
+        other = _term(dictionary="Pixiv")
+        context = context_for(entry, entries=(other, entry))
+
+        self.assertEqual(context.entries, (other, entry))
+
+    def test_an_empty_list_becomes_just_the_entry(self) -> None:
+        entry = _term()
+
+        self.assertEqual(context_for(entry).entries, (entry,))
 
     def test_a_japanese_dictionary_gets_a_marker(self) -> None:
         # The bug this replaces: kebab_case was ASCII-only, so every CJK title reduced

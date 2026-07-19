@@ -1,0 +1,47 @@
+{
+  "comment": "Fixture: an old Yomichan/Yomitan backup (options before v59), terms/kanji with plain-string field values, two profiles to exercise profileCurrent. Hand-written.",
+  "version": 2,
+  "options": {
+    "version": 50,
+    "profileCurrent": 1,
+    "profiles": [
+      {
+        "id": "unused",
+        "name": "Old",
+        "options": {
+          "anki": {
+            "terms": { "deck": "Wrong", "model": "Wrong", "fields": { "Front": "{expression}" } }
+          }
+        }
+      },
+      {
+        "id": "active",
+        "name": "Active",
+        "options": {
+          "anki": {
+            "enable": true,
+            "tags": ["yomichan"],
+            "duplicateScope": "deck-root",
+            "terms": {
+              "deck": "Vocab",
+              "model": "Basic",
+              "fields": {
+                "Expression": "{expression}",
+                "Reading": "{reading}",
+                "Meaning": "{glossary} {clipboard-text}"
+              }
+            },
+            "kanji": {
+              "deck": "Vocab",
+              "model": "Basic",
+              "fields": {
+                "Character": "{character}",
+                "Meaning": "{glossary}"
+              }
+            }
+          }
+        }
+      }
+    ]
+  }
+}

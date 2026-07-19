@@ -1,0 +1,53 @@
+{
+  "comment": "Fixture: a modern Yomitan backup (options version 64+), the cardFormats era. Hand-written to the shape documented in the reference; not a real user's data.",
+  "version": 5,
+  "date": "2026-01-01 00:00:00",
+  "options": {
+    "version": 64,
+    "profileCurrent": 0,
+    "profiles": [
+      {
+        "id": "default",
+        "name": "Default",
+        "options": {
+          "anki": {
+            "enable": true,
+            "server": "http://127.0.0.1:8765",
+            "tags": ["yomitan", "mined"],
+            "duplicateScope": "deck",
+            "checkForDuplicates": true,
+            "cardFormats": [
+              {
+                "type": "term",
+                "name": "Japanese vocab",
+                "deck": "Mining::Japanese",
+                "model": "Lapis",
+                "fields": {
+                  "Expression": { "value": "{expression}", "overwriteMode": "coalesce" },
+                  "Reading": { "value": "{reading}", "overwriteMode": "coalesce" },
+                  "Sentence": { "value": "{cloze-prefix}<b>{cloze-body}</b>{cloze-suffix}", "overwriteMode": "coalesce" },
+                  "Glossary": { "value": "{glossary}", "overwriteMode": "coalesce" },
+                  "Audio": { "value": "{audio}", "overwriteMode": "coalesce" },
+                  "Screenshot": { "value": "{screenshot}", "overwriteMode": "coalesce" },
+                  "Frequency": { "value": "freq: {frequency-harmonic-rank} {url}", "overwriteMode": "coalesce" }
+                }
+              },
+              {
+                "type": "kanji",
+                "name": "Kanji cards",
+                "deck": "Mining::Kanji",
+                "model": "Kanji",
+                "fields": {
+                  "Character": { "value": "{character}", "overwriteMode": "coalesce" },
+                  "Onyomi": { "value": "{onyomi}", "overwriteMode": "coalesce" },
+                  "Kunyomi": { "value": "{kunyomi}", "overwriteMode": "coalesce" },
+                  "Meaning": { "value": "{glossary}", "overwriteMode": "coalesce" }
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

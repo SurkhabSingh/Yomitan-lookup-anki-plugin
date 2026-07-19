@@ -128,9 +128,19 @@ def context_for(
     source_deck: str = "",
     media: tuple[tuple[str, str], ...] = (),
 ) -> NoteContext:
+    """Build a marker context, guaranteeing the selected entry is among ``entries``.
+
+    Aggregating markers such as ``{single-glossary-<dict>}`` and ``{frequencies}`` read
+    ``entries``, while ``{glossary}`` reads ``entry``. If the two disagree — the entry
+    the user chose is absent from the aggregate list — a field can render empty while
+    the popup showed content. So the entry is always a member here: markers cannot see
+    a narrower world than the entry the note is being built from.
+    """
+
+    complete = entries if entry in entries else (*entries, entry)
     return NoteContext(
         entry=entry,
-        entries=entries or (entry,),
+        entries=complete,
         cloze=cloze or Cloze(),
         source_term=source_term,
         translation=translation,
