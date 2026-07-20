@@ -30,6 +30,7 @@ from .protocol import (
 from .runtime import dictionary_service
 from .translation.models import JobOutcome
 from .translation.service import ERROR, PENDING, READY
+from .webview_push import encode_payload
 
 _registered = False
 _frequency_sort_policy: FrequencySortPolicy | None = None
@@ -70,7 +71,7 @@ def on_webview_will_set_content(web_content: Any, context: object | None) -> Non
     addon_package = mw.addonManager.addonFromModule(__name__)
     config = runtime_config(mw.addonManager.getConfig(addon_package))
     apply_runtime_config(config)
-    config_json = json.dumps(config, ensure_ascii=False).replace("</", "<\\/")
+    config_json = encode_payload(config)
 
     web_content.head += f"<script>window.AnkiLookupConfig={config_json};</script>"
     web_content.css.append(f"/_addons/{addon_package}/web/popup.css")

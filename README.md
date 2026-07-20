@@ -118,3 +118,23 @@ Dictionary files are not bundled. Users must provide dictionaries they are permi
 to use and import them through the add-on's dictionary manager. Imported dictionaries
 are stored in the add-on's preserved `user_files` directory and survive normal restarts
 and add-on upgrades.
+
+## Security & privacy
+
+- **No telemetry, no background network access.** Anki Lookup contacts the network only
+  when you explicitly open a translation tab, and only then it opens Google Translate or
+  DeepL with the sentence you selected. Nothing is sent anywhere otherwise.
+- **Dictionary content is treated as untrusted.** Definitions from imported dictionaries
+  are rendered as plain text in the popup and HTML-escaped before landing in a note
+  field, so a malicious dictionary cannot run scripts in the reviewer or on a card.
+  Dictionary archives are validated on import against path-traversal and decompression
+  ("zip bomb") attacks.
+- **The translation bridge is off by default and local-only.** The optional *Translate
+  inside Anki* feature listens on the loopback interface (`127.0.0.1`) only — never on a
+  network interface — so no other machine can reach it. It is a same-machine channel
+  shared with the Wonder of U desktop app and browser extension; treat it, like anything
+  else on your own computer, as trusted only against other software already running as
+  you. Leave it off unless you use that integration.
+- **Everything stays in the add-on's folder.** All data the add-on writes — dictionaries
+  and the translation cache — lives under its own `user_files` directory. It does not
+  read or write anywhere else on your system.

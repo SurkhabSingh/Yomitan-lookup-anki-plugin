@@ -546,16 +546,15 @@ class NotePresetEditor:
         return "\n".join(lines)
 
     def _apply_to_reviewer(self, config: dict[str, Any]) -> None:
-        import json
-
         from ..hooks import apply_runtime_config
+        from ..webview_push import encode_payload
 
         apply_runtime_config(config)
         reviewer = getattr(self._mw, "reviewer", None)
         web = getattr(reviewer, "web", None)
         if web is None:
             return
-        payload = json.dumps(config, ensure_ascii=False).replace("</", "<\\/")
+        payload = encode_payload(config)
         web.eval(f"window.AnkiLookupApplyConfig && window.AnkiLookupApplyConfig({payload});")
 
 

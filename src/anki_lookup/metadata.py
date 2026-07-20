@@ -2,4 +2,4 @@
 
 ADDON_NAME = "Anki Lookup"
 PACKAGE_NAME = "anki_lookup"
-VERSION = "0.4.0"
+VERSION = "0.5.0"

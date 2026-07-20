@@ -27,13 +27,16 @@ RECEIVER = "window.AnkiLookupPushResult"
 
 
 def encode_payload(payload: dict[str, Any]) -> str:
-    """Encode a payload for embedding in a JavaScript expression.
+    """Encode a payload for embedding in a JavaScript context.
 
-    ``ensure_ascii=True`` — unlike the ``<script>`` body injected in ``hooks.py`` —
-    because this is an expression handed to ``web.eval``. It escapes U+2028 and U+2029
-    for free, which are valid in JSON strings but terminate a line in JavaScript. The
-    ``</`` guard is kept regardless: it costs nothing, and Anki has historically
-    evaluated these inside script contexts.
+    Shared by every site that drops JSON into JavaScript — the ``web.eval`` expressions
+    here and in the settings/preset dialogs, and the ``<script>`` body injected at
+    reviewer load in ``hooks.py`` — so they all escape identically.
+
+    ``ensure_ascii=True`` escapes U+2028 and U+2029 for free: both are valid inside JSON
+    strings but are line terminators in JavaScript, which historically broke inline
+    scripts. The ``</`` guard prevents a value from closing the surrounding ``<script>``
+    element.
     """
 
     return json.dumps(payload, ensure_ascii=True).replace("</", "<\\/")
